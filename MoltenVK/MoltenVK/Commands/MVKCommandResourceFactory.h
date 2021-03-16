@@ -1,7 +1,7 @@
 /*
  * MVKCommandResourceFactory.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,15 +38,17 @@ class MVKQueryPool;
  */
 typedef struct MVKRPSKeyBlitImg {
 	uint16_t srcMTLPixelFormat = 0;			/**< as MTLPixelFormat */
-	uint16_t srcMTLTextureType = 0;			/**< as MTLTextureType */
 	uint16_t dstMTLPixelFormat = 0;			/**< as MTLPixelFormat */
+	uint8_t srcMTLTextureType = 0;			/**< as MTLTextureType */
+	uint8_t srcAspect = 0;					/**< as VkImageAspectFlags */
 	uint8_t srcFilter = 0;					/**< as MTLSamplerMinMagFilter */
 	uint8_t dstSampleCount = 0;
 
 	bool operator==(const MVKRPSKeyBlitImg& rhs) const {
 		if (srcMTLPixelFormat != rhs.srcMTLPixelFormat) { return false; }
-		if (srcMTLTextureType != rhs.srcMTLTextureType) { return false; }
 		if (dstMTLPixelFormat != rhs.dstMTLPixelFormat) { return false; }
+		if (srcMTLTextureType != rhs.srcMTLTextureType) { return false; }
+		if (srcAspect != rhs.srcAspect) { return false; }
 		if (srcFilter != rhs.srcFilter) { return false; }
 		if (dstSampleCount != rhs.dstSampleCount) { return false; }
 		return true;
@@ -58,9 +60,11 @@ typedef struct MVKRPSKeyBlitImg {
 
 	inline MTLSamplerMinMagFilter getSrcMTLSamplerMinMagFilter() { return (MTLSamplerMinMagFilter)srcFilter; }
 
+	inline MTLTextureType getSrcMTLTextureType() { return (MTLTextureType)srcMTLTextureType; }
+
 	inline bool isSrcArrayType() {
 		return (srcMTLTextureType == MTLTextureType2DArray ||
-#if MVK_MACOS
+#if MVK_MACOS_OR_IOS
 				srcMTLTextureType == MTLTextureType2DMultisampleArray ||
 #endif
 				srcMTLTextureType == MTLTextureType1DArray);
@@ -70,10 +74,13 @@ typedef struct MVKRPSKeyBlitImg {
 		std::size_t hash = srcMTLPixelFormat;
 
 		hash <<= 16;
+		hash |= dstMTLPixelFormat;
+
+		hash <<= 8;
 		hash |= srcMTLTextureType;
 
-		hash <<= 16;
-		hash |= dstMTLPixelFormat;
+		hash <<= 8;
+		hash |= srcAspect;
 
 		hash <<= 8;
 		hash |= srcFilter;
@@ -120,7 +127,11 @@ typedef struct MVKRPSKeyClearAtt {
 
     void enableAttachment(uint32_t attIdx) { mvkEnableFlags(flags, bitFlag << attIdx); }
 
+    void disableAttachment(uint32_t attIdx) { mvkDisableFlags(flags, bitFlag << attIdx); }
+
     bool isAttachmentEnabled(uint32_t attIdx) { return mvkIsAnyFlagEnabled(flags, bitFlag << attIdx); }
+
+	bool isAnyAttachmentEnabled() { return mvkIsAnyFlagEnabled(flags, (bitFlag << kMVKClearAttachmentCount) - 1); }
 
 	void enableLayeredRendering() { mvkEnableFlags(flags, bitFlag << kMVKClearAttachmentLayeredRenderingBitIndex); }
 
@@ -180,7 +191,7 @@ typedef struct MVKMTLStencilDescriptorData {
         // even if the structure contains alignment gaps.
         mvkClear(this);
 
-        enabled = false,
+        enabled = false;
         stencilCompareFunction = MTLCompareFunctionAlways;
         stencilFailureOperation = MTLStencilOperationKeep;
         depthFailureOperation = MTLStencilOperationKeep;
@@ -413,13 +424,23 @@ public:
 	/** Returns a new MTLComputePipelineState for filling a buffer. */
 	id<MTLComputePipelineState> newCmdFillBufferMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner);
 
+#if MVK_MACOS
+	/** Returns a new MTLComputePipelineState for clearing an image. */
+	id<MTLComputePipelineState> newCmdClearColorImageMTLComputePipelineState(MVKFormatType type,
+																			 MVKVulkanAPIDeviceObject* owner);
+#endif
+
 	/** Returns a new MTLComputePipelineState for copying between a buffer holding compressed data and a 3D image. */
 	id<MTLComputePipelineState> newCmdCopyBufferToImage3DDecompressMTLComputePipelineState(bool needTempBuf,
 																						   MVKVulkanAPIDeviceObject* owner);
 
+	/** Returns a new MTLComputePipelineState for converting an indirect buffer for use in a multiview draw. */
+	id<MTLComputePipelineState> newCmdDrawIndirectMultiviewConvertBuffersMTLComputePipelineState(bool indexed,
+																								 MVKVulkanAPIDeviceObject* owner);
+
 	/** Returns a new MTLComputePipelineState for converting an indirect buffer for use in a tessellated draw. */
-	id<MTLComputePipelineState> newCmdDrawIndirectConvertBuffersMTLComputePipelineState(bool indexed,
-																						MVKVulkanAPIDeviceObject* owner);
+	id<MTLComputePipelineState> newCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(bool indexed,
+																							MVKVulkanAPIDeviceObject* owner);
 
 	/** Returns a new MTLComputePipelineState for copying an index buffer for use in a tessellated draw. */
 	id<MTLComputePipelineState> newCmdDrawIndexedCopyIndexBufferMTLComputePipelineState(MTLIndexType type,
@@ -427,6 +448,9 @@ public:
 
 	/** Returns a new MTLComputePipelineState for copying query results to a buffer. */
 	id<MTLComputePipelineState> newCmdCopyQueryPoolResultsMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner);
+
+	/** Returns a new MTLComputePipelineState for accumulating occlusion query results to a buffer. */
+	id<MTLComputePipelineState> newAccumulateOcclusionQueryResultsMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner);
 
 
 #pragma mark Construction

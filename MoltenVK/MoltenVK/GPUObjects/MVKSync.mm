@@ -1,7 +1,7 @@
 /*
  * MVKSync.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 
 #include "MVKSync.h"
 #include "MVKFoundation.h"
-#include "MVKLogging.h"
 
 using namespace std;
 
@@ -78,11 +77,11 @@ MVKSemaphoreImpl::~MVKSemaphoreImpl() {
 
 
 #pragma mark -
-#pragma mark MVKSemaphoreMTLEvent
+#pragma mark MVKSemaphoreMTLFence
 
 // Could use any encoder. Assume BLIT is fastest and lightest.
 // Nil mtlCmdBuff will do nothing.
-void MVKSemaphoreMTLFence::encodeWait(id<MTLCommandBuffer> mtlCmdBuff) {
+void MVKSemaphoreMTLFence::encodeWait(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
 	id<MTLBlitCommandEncoder> mtlCmdEnc = mtlCmdBuff.blitCommandEncoder;
 	[mtlCmdEnc waitForFence: _mtlFence];
 	[mtlCmdEnc endEncoding];
@@ -90,10 +89,18 @@ void MVKSemaphoreMTLFence::encodeWait(id<MTLCommandBuffer> mtlCmdBuff) {
 
 // Could use any encoder. Assume BLIT is fastest and lightest.
 // Nil mtlCmdBuff will do nothing.
-void MVKSemaphoreMTLFence::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff) {
+void MVKSemaphoreMTLFence::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
 	id<MTLBlitCommandEncoder> mtlCmdEnc = mtlCmdBuff.blitCommandEncoder;
 	[mtlCmdEnc updateFence: _mtlFence];
 	[mtlCmdEnc endEncoding];
+}
+
+uint64_t MVKSemaphoreMTLFence::deferSignal() {
+	return 0;
+}
+
+void MVKSemaphoreMTLFence::encodeDeferredSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
+	encodeSignal(mtlCmdBuff, 0);
 }
 
 MVKSemaphoreMTLFence::MVKSemaphoreMTLFence(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo) :
@@ -108,14 +115,20 @@ MVKSemaphoreMTLFence::~MVKSemaphoreMTLFence() {
 #pragma mark -
 #pragma mark MVKSemaphoreMTLEvent
 
-// Nil mtlCmdBuff will do nothing.
-void MVKSemaphoreMTLEvent::encodeWait(id<MTLCommandBuffer> mtlCmdBuff) {
-	[mtlCmdBuff encodeWaitForEvent: _mtlEvent value: _mtlEventValue++];
+void MVKSemaphoreMTLEvent::encodeWait(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
+	if (mtlCmdBuff) { [mtlCmdBuff encodeWaitForEvent: _mtlEvent value: _mtlEventValue++]; }
 }
 
-// Nil mtlCmdBuff will do nothing.
-void MVKSemaphoreMTLEvent::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff) {
-	[mtlCmdBuff encodeSignalEvent: _mtlEvent value: _mtlEventValue];
+void MVKSemaphoreMTLEvent::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
+	if (mtlCmdBuff) { [mtlCmdBuff encodeSignalEvent: _mtlEvent value: _mtlEventValue]; }
+}
+
+uint64_t MVKSemaphoreMTLEvent::deferSignal() {
+	return _mtlEventValue;
+}
+
+void MVKSemaphoreMTLEvent::encodeDeferredSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t deferToken) {
+	if (mtlCmdBuff) { [mtlCmdBuff encodeSignalEvent: _mtlEvent value: deferToken]; }
 }
 
 MVKSemaphoreMTLEvent::MVKSemaphoreMTLEvent(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo) :
@@ -131,17 +144,149 @@ MVKSemaphoreMTLEvent::~MVKSemaphoreMTLEvent() {
 #pragma mark -
 #pragma mark MVKSemaphoreEmulated
 
-void MVKSemaphoreEmulated::encodeWait(id<MTLCommandBuffer> mtlCmdBuff) {
-	if ( !mtlCmdBuff ) { _blocker.wait(UINT64_MAX, true); }
+void MVKSemaphoreEmulated::encodeWait(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
+	if ( !mtlCmdBuff ) {
+		_device->addSemaphore(&_blocker);
+		_blocker.wait(UINT64_MAX, true);
+		_device->removeSemaphore(&_blocker);
+	}
 }
 
-void MVKSemaphoreEmulated::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff) {
+void MVKSemaphoreEmulated::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
 	if ( !mtlCmdBuff ) { _blocker.release(); }
+}
+
+uint64_t MVKSemaphoreEmulated::deferSignal() {
+	return 0;
+}
+
+void MVKSemaphoreEmulated::encodeDeferredSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t) {
+	encodeSignal(mtlCmdBuff, 0);
 }
 
 MVKSemaphoreEmulated::MVKSemaphoreEmulated(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo) :
 	MVKSemaphore(device, pCreateInfo),
 	_blocker(false, 1) {}
+
+
+#pragma mark -
+#pragma mark MVKTimelineSemaphoreMTLEvent
+
+// Nil mtlCmdBuff will do nothing.
+void MVKTimelineSemaphoreMTLEvent::encodeWait(id<MTLCommandBuffer> mtlCmdBuff, uint64_t value) {
+	[mtlCmdBuff encodeWaitForEvent: _mtlEvent value: value];
+}
+
+// Nil mtlCmdBuff will do nothing.
+void MVKTimelineSemaphoreMTLEvent::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t value) {
+	[mtlCmdBuff encodeSignalEvent: _mtlEvent value: value];
+}
+
+void MVKTimelineSemaphoreMTLEvent::signal(const VkSemaphoreSignalInfo* pSignalInfo) {
+	_mtlEvent.signaledValue = pSignalInfo->value;
+}
+
+bool MVKTimelineSemaphoreMTLEvent::registerWait(MVKFenceSitter* sitter, const VkSemaphoreWaitInfo* pWaitInfo, uint32_t index) {
+	if (_mtlEvent.signaledValue >= pWaitInfo->pValues[index]) { return true; }
+	lock_guard<mutex> lock(_lock);
+	sitter->await();
+	auto addRslt = _sitters.insert(sitter);
+	if (addRslt.second) {
+		retain();
+		_device->addSemaphore(&sitter->_blocker);
+		[_mtlEvent notifyListener: sitter->getMTLSharedEventListener()
+						  atValue: pWaitInfo->pValues[index]
+							block: ^(id<MTLSharedEvent>, uint64_t) {
+			lock_guard<mutex> blockLock(_lock);
+			if (_sitters.count(sitter)) { sitter->signaled(); }
+			release();
+		}];
+	}
+	return false;
+}
+
+void MVKTimelineSemaphoreMTLEvent::unregisterWait(MVKFenceSitter* sitter) {
+	lock_guard<mutex> lock(_lock);
+	_device->removeSemaphore(&sitter->_blocker);
+	_sitters.erase(sitter);
+}
+
+MVKTimelineSemaphoreMTLEvent::MVKTimelineSemaphoreMTLEvent(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo, const VkSemaphoreTypeCreateInfo* pTypeCreateInfo) :
+	MVKTimelineSemaphore(device, pCreateInfo, pTypeCreateInfo),
+	_mtlEvent([device->getMTLDevice() newSharedEvent]) { 	//retained
+
+	_mtlEvent.signaledValue = pTypeCreateInfo->initialValue;
+}
+
+MVKTimelineSemaphoreMTLEvent::~MVKTimelineSemaphoreMTLEvent() {
+    [_mtlEvent release];
+}
+
+
+#pragma mark -
+#pragma mark MVKTimelineSemaphoreEmulated
+
+void MVKTimelineSemaphoreEmulated::encodeWait(id<MTLCommandBuffer> mtlCmdBuff, uint64_t value) {
+	unique_lock<mutex> lock(_lock);
+	if ( !mtlCmdBuff ) {
+		_device->addTimelineSemaphore(this, value);
+		_blocker.wait(lock, [=]() { return _value >= value; });
+		_device->removeTimelineSemaphore(this, value);
+	}
+}
+
+void MVKTimelineSemaphoreEmulated::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, uint64_t value) {
+	lock_guard<mutex> lock(_lock);
+	if ( !mtlCmdBuff ) { signalImpl(value); }
+}
+
+void MVKTimelineSemaphoreEmulated::signal(const VkSemaphoreSignalInfo* pSignalInfo) {
+	lock_guard<mutex> lock(_lock);
+	signalImpl(pSignalInfo->value);
+}
+
+void MVKTimelineSemaphoreEmulated::signalImpl(uint64_t value) {
+	if (value > _value) {
+		_value = value;
+		_blocker.notify_all();
+		for (auto& sittersForValue : _sitters) {
+			if (sittersForValue.first > value) { continue; }
+			for (auto* sitter : sittersForValue.second) {
+				sitter->signaled();
+			}
+		}
+	}
+}
+
+bool MVKTimelineSemaphoreEmulated::registerWait(MVKFenceSitter* sitter, const VkSemaphoreWaitInfo* pWaitInfo, uint32_t index) {
+	lock_guard<mutex> lock(_lock);
+	if (pWaitInfo->pValues[index] >= _value) { return true; }
+	uint64_t value = pWaitInfo->pValues[index];
+	if (!_sitters.count(value)) { _sitters.emplace(make_pair(value, unordered_set<MVKFenceSitter*>())); }
+	auto addRslt = _sitters[value].insert(sitter);
+	if (addRslt.second) {
+		_device->addSemaphore(&sitter->_blocker);
+		sitter->await();
+	}
+	return false;
+}
+
+void MVKTimelineSemaphoreEmulated::unregisterWait(MVKFenceSitter* sitter) {
+	MVKSmallVector<uint64_t> emptySets;
+	for (auto& sittersForValue : _sitters) {
+		_device->removeSemaphore(&sitter->_blocker);
+		sittersForValue.second.erase(sitter);
+		// Can't destroy while iterating...
+		if (sittersForValue.second.empty()) {
+			emptySets.push_back(sittersForValue.first);
+		}
+	}
+	for (auto value : emptySets) { _sitters.erase(value); }
+}
+
+MVKTimelineSemaphoreEmulated::MVKTimelineSemaphoreEmulated(MVKDevice* device, const VkSemaphoreCreateInfo* pCreateInfo, const VkSemaphoreTypeCreateInfo* pTypeCreateInfo) :
+	MVKTimelineSemaphore(device, pCreateInfo, pTypeCreateInfo),
+	_value(pTypeCreateInfo->initialValue) {}
 
 
 #pragma mark -
@@ -156,12 +301,16 @@ void MVKFence::addSitter(MVKFenceSitter* fenceSitter) {
 
 	// Ensure each fence only added once to each fence sitter
 	auto addRslt = _fenceSitters.insert(fenceSitter);	// pair with second element true if was added
-	if (addRslt.second) { fenceSitter->awaitFence(this); }
+	if (addRslt.second) {
+		_device->addSemaphore(&fenceSitter->_blocker);
+		fenceSitter->await();
+	}
 }
 
 void MVKFence::removeSitter(MVKFenceSitter* fenceSitter) {
 	lock_guard<mutex> lock(_lock);
 
+	_device->removeSemaphore(&fenceSitter->_blocker);
 	_fenceSitters.erase(fenceSitter);
 }
 
@@ -173,7 +322,7 @@ void MVKFence::signal() {
 
 	// Notify all the fence sitters, and clear them from this instance.
     for (auto& fs : _fenceSitters) {
-        fs->fenceSignaled(this);
+        fs->signaled();
     }
 	_fenceSitters.clear();
 }
@@ -189,6 +338,16 @@ bool MVKFence::getIsSignaled() {
 	lock_guard<mutex> lock(_lock);
 
 	return _isSignaled;
+}
+
+
+#pragma mark -
+#pragma mark MVKFenceSitter
+
+MTLSharedEventListener* MVKFenceSitter::getMTLSharedEventListener() {
+	// TODO: Use dispatch queue from device?
+	if (!_listener) { _listener = [MTLSharedEventListener new]; }
+	return _listener;
 }
 
 
@@ -255,7 +414,11 @@ void MVKEventEmulated::encodeSignal(id<MTLCommandBuffer> mtlCmdBuff, bool status
 }
 
 void MVKEventEmulated::encodeWait(id<MTLCommandBuffer> mtlCmdBuff) {
-	if ( !_inlineSignalStatus ) { _blocker.wait(); }
+	if ( !_inlineSignalStatus ) {
+		_device->addSemaphore(&_blocker);
+		_blocker.wait();
+		_device->removeSemaphore(&_blocker);
+	}
 }
 
 MVKEventEmulated::MVKEventEmulated(MVKDevice* device, const VkEventCreateInfo* pCreateInfo) :
@@ -279,6 +442,10 @@ VkResult mvkWaitForFences(MVKDevice* device,
 						  VkBool32 waitAll,
 						  uint64_t timeout) {
 
+	if (device->getConfigurationResult() != VK_SUCCESS) {
+		return device->getConfigurationResult();
+	}
+
 	VkResult rslt = VK_SUCCESS;
 	MVKFenceSitter fenceSitter(waitAll);
 
@@ -286,10 +453,51 @@ VkResult mvkWaitForFences(MVKDevice* device,
 		((MVKFence*)pFences[i])->addSitter(&fenceSitter);
 	}
 
-	if ( !fenceSitter.wait(timeout) ) { rslt = VK_TIMEOUT; }
+	bool finished = fenceSitter.wait(timeout);
+	if (device->getConfigurationResult() != VK_SUCCESS) {
+		rslt = device->getConfigurationResult();
+	} else if ( !finished ) {
+		rslt = VK_TIMEOUT;
+	}
 
 	for (uint32_t i = 0; i < fenceCount; i++) {
 		((MVKFence*)pFences[i])->removeSitter(&fenceSitter);
+	}
+
+	return rslt;
+}
+
+// Create a blocking fence sitter, add it to each semaphore, wait, then remove it.
+VkResult mvkWaitSemaphores(MVKDevice* device,
+						   const VkSemaphoreWaitInfo* pWaitInfo,
+						   uint64_t timeout) {
+
+	if (device->getConfigurationResult() != VK_SUCCESS) {
+		return device->getConfigurationResult();
+	}
+
+	VkResult rslt = VK_SUCCESS;
+	bool waitAny = mvkIsAnyFlagEnabled(pWaitInfo->flags, VK_SEMAPHORE_WAIT_ANY_BIT);
+	bool alreadySignaled = false;
+	MVKFenceSitter fenceSitter(!waitAny);
+
+	for (uint32_t i = 0; i < pWaitInfo->semaphoreCount; i++) {
+		if (((MVKTimelineSemaphore*)pWaitInfo->pSemaphores[i])->registerWait(&fenceSitter, pWaitInfo, i) && waitAny) {
+			// In this case, we don't need to wait.
+			alreadySignaled = true;
+			break;
+		}
+	}
+
+	bool finished = alreadySignaled || fenceSitter.wait(timeout);
+	if (device->getConfigurationResult() != VK_SUCCESS) {
+		rslt = device->getConfigurationResult();
+	} else if ( !finished ) {
+		rslt = VK_TIMEOUT;
+	}
+
+	for (uint32_t i = 0; i < pWaitInfo->semaphoreCount; i++) {
+		((MVKTimelineSemaphore*)pWaitInfo->pSemaphores[i])->unregisterWait(&fenceSitter);
 	}
 
 	return rslt;
@@ -313,7 +521,7 @@ void MVKMetalCompiler::compile(unique_lock<mutex>& lock, dispatch_block_t block)
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{ @autoreleasepool { block(); } });
 
 	// Limit timeout to avoid overflow since wait_for() uses wait_until()
-	chrono::nanoseconds nanoTimeout(min(mvkDev->_pMVKConfig->metalCompileTimeout, kMVKUndefinedLargeUInt64));
+	chrono::nanoseconds nanoTimeout(min(mvkGetMVKConfiguration()->metalCompileTimeout, kMVKUndefinedLargeUInt64));
 	_blocker.wait_for(lock, nanoTimeout, [this]{ return _isCompileDone; });
 
 	if ( !_isCompileDone ) {

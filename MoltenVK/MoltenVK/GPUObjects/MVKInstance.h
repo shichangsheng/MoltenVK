@@ -1,7 +1,7 @@
 /*
  * MVKInstance.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,15 +19,15 @@
 #pragma once
 
 #include "MVKEnvironment.h"
-#include "MVKDevice.h"
 #include "MVKLayers.h"
 #include "MVKVulkanAPIObject.h"
-#include "MVKVector.h"
-#include "vk_mvk_moltenvk.h"
+#include "MVKSmallVector.h"
 #include <unordered_map>
 #include <string>
 #include <mutex>
 
+class MVKPhysicalDevice;
+class MVKDevice;
 class MVKSurface;
 class MVKDebugReportCallback;
 class MVKDebugUtilsMessenger;
@@ -36,13 +36,21 @@ class MVKDebugUtilsMessenger;
 /** Tracks info about entry point function pointer addresses. */
 typedef struct {
 	PFN_vkVoidFunction functionPointer;
+	uint32_t apiVersion;
 	const char* ext1Name;
 	const char* ext2Name;
 	bool isDevice;
 
 	bool isCore() { return !ext1Name && !ext2Name; }
-	bool isEnabled(const MVKExtensionList& extList) {
-		return isCore() || extList.isEnabled(ext1Name) || extList.isEnabled(ext2Name);
+
+	// If we're artificially running without all supported extensions, allow the
+	// associated functions to be available anyway, in case the app is surprised
+	// (ie- expects the functions from past experience and has no alternate handling).
+	bool isEnabled(uint32_t enabledVersion, const MVKExtensionList& extList) {
+		return ((isCore() && MVK_VULKAN_API_VERSION_CONFORM(enabledVersion) >= apiVersion) ||
+				(extList.isEnabled(ext1Name) || extList.isEnabled(ext2Name) ||
+				 !mvkIsAnyFlagEnabled(mvkGetMVKConfiguration()->advertiseExtensions,
+									  MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL)));
 	}
 } MVKEntryPoint;
 
@@ -63,6 +71,9 @@ public:
 
 	/** Returns a pointer to the Vulkan instance. */
 	MVKInstance* getInstance() override { return this; }
+
+	/** Returns the maximum version of Vulkan the application supports. */
+	inline uint32_t getAPIVersion() { return _appInfo.apiVersion; }
 
 	/** Returns a pointer to the layer manager. */
 	inline MVKLayerManager* getLayerManager() { return MVKLayerManager::globalManager(); }
@@ -143,12 +154,6 @@ public:
 	/** Returns whether debug callbacks are being used. */
 	bool hasDebugCallbacks() { return _hasDebugReportCallbacks || _hasDebugUtilsMessengers; }
 
-	/** Returns the MoltenVK configuration settings. */
-	const MVKConfiguration* getMoltenVKConfiguration() { return &_mvkConfig; }
-
-	/** Returns the MoltenVK configuration settings. */
-	void setMoltenVKConfiguration(MVKConfiguration* mvkConfig) { _mvkConfig = *mvkConfig; }
-
 	/** The list of Vulkan extensions, indicating whether each has been enabled by the app. */
 	const MVKExtensionList _enabledExtensions;
 
@@ -177,28 +182,26 @@ public:
 protected:
 	friend MVKDevice;
 
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 	void initProcAddrs();
 	void initDebugCallbacks(const VkInstanceCreateInfo* pCreateInfo);
+	NSArray<id<MTLDevice>>* getAvailableMTLDevicesArray();
 	VkDebugReportFlagsEXT getVkDebugReportFlagsFromASLLevel(int aslLvl);
 	VkDebugUtilsMessageSeverityFlagBitsEXT getVkDebugUtilsMessageSeverityFlagBitsFromASLLevel(int aslLvl);
 	MVKEntryPoint* getEntryPoint(const char* pName);
-	void initConfig();
     void logVersions();
 	VkResult verifyLayers(uint32_t count, const char* const* names);
 
-	MVKConfiguration _mvkConfig;
 	VkApplicationInfo _appInfo;
-	MVKVectorInline<MVKPhysicalDevice, 2> _physicalDevices;
-	MVKVectorDefault<MVKDebugReportCallback*> _debugReportCallbacks;
-	MVKVectorDefault<MVKDebugUtilsMessenger*> _debugUtilMessengers;
+	MVKSmallVector<MVKPhysicalDevice*, 2> _physicalDevices;
+	MVKSmallVector<MVKDebugReportCallback*> _debugReportCallbacks;
+	MVKSmallVector<MVKDebugUtilsMessenger*> _debugUtilMessengers;
 	std::unordered_map<std::string, MVKEntryPoint> _entryPoints;
 	std::mutex _dcbLock;
 	bool _hasDebugReportCallbacks;
 	bool _hasDebugUtilsMessengers;
 	bool _useCreationCallbacks;
 	const char* _debugReportCallbackLayerPrefix;
-	int32_t _autoGPUCaptureScope;
 };
 
 
@@ -232,7 +235,7 @@ public:
 protected:
 	friend MVKInstance;
 	
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 
 	MVKInstance* _mvkInstance;
 	VkDebugReportCallbackCreateInfoEXT _info;
@@ -270,7 +273,7 @@ public:
 protected:
 	friend MVKInstance;
 
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 
 	MVKInstance* _mvkInstance;
 	VkDebugUtilsMessengerCreateInfoEXT _info;

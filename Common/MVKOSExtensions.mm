@@ -1,7 +1,7 @@
 /*
  * MVKOSExtensions.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,17 +29,13 @@
 
 using namespace std;
 
-static const MVKOSVersion kMVKOSVersionUnknown = 0.0f;
-static MVKOSVersion _mvkOSVersion = kMVKOSVersionUnknown;
 MVKOSVersion mvkOSVersion() {
-    if (_mvkOSVersion == kMVKOSVersionUnknown) {
-        NSOperatingSystemVersion osVer = [[NSProcessInfo processInfo] operatingSystemVersion];
-        float maj = osVer.majorVersion;
-        float min = osVer.minorVersion;
-        float pat = osVer.patchVersion;
-        _mvkOSVersion = maj + (min / 100.0f) +  + (pat / 10000.0f);
-    }
-    return _mvkOSVersion;
+	static MVKOSVersion _mvkOSVersion = 0;
+	if ( !_mvkOSVersion ) {
+		NSOperatingSystemVersion osVer = [[NSProcessInfo processInfo] operatingSystemVersion];
+		_mvkOSVersion = mvkMakeOSVersion((uint32_t)osVer.majorVersion, (uint32_t)osVer.minorVersion, (uint32_t)osVer.patchVersion);
+	}
+	return _mvkOSVersion;
 }
 
 static uint64_t _mvkTimestampBase;
@@ -101,16 +97,21 @@ bool mvkGetEnvVarBool(std::string varName, bool* pWasFound) {
 #pragma mark System memory
 
 uint64_t mvkGetSystemMemorySize() {
+#if MVK_MACOS_OR_IOS
 	mach_msg_type_number_t host_size = HOST_BASIC_INFO_COUNT;
 	host_basic_info_data_t info;
 	if (host_info(mach_host_self(), HOST_BASIC_INFO, (host_info_t)&info, &host_size) == KERN_SUCCESS) {
 		return info.max_mem;
 	}
 	return 0;
+#endif
+#if MVK_TVOS
+	return 0;
+#endif
 }
 
 uint64_t mvkGetAvailableMemorySize() {
-#if MVK_IOS
+#if MVK_IOS_OR_TVOS
 	if (mvkOSVersionIsAtLeast(13.0)) { return os_proc_available_memory(); }
 #endif
 	mach_port_t host_port;

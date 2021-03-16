@@ -6,28 +6,488 @@
 
 #What's New in MoltenVK
 
-Copyright (c) 2015-2020 [The Brenwill Workshop Ltd.](http://www.brenwill.com)
+Copyright (c) 2015-2021 [The Brenwill Workshop Ltd.](http://www.brenwill.com)
 
-*This document is written in [Markdown](http://en.wikipedia.org/wiki/Markdown) format.
-For best results, use a Markdown reader.*
+[comment]: # "This document is written in Markdown (http://en.wikipedia.org/wiki/Markdown) format."
+[comment]: # "For best results, use a Markdown reader."
 
+
+
+MoltenVK 1.1.3
+--------------
+
+Released TBD
+
+- Add support for `HDR10` colorspace via `VK_COLOR_SPACE_HDR10_HLG_EXT` and `VK_COLOR_SPACE_HDR10_ST2084_EXT`.
+- Always explicitly set `CAMetalLayer` colorspace property based on _Vulkan_ parameters, 
+  and don't rely on _Metal_ default values.
+- Avoid use of _Metal_ renderpass load and store actions on memoryless attachments.
+- Remove project qualifiers from references to `SPIRV-Cross` header files.
+- `MVKDescriptorPool` pools its descriptor sets.
+- Enable `MVKConfiguration::preallocateDescriptors` and `MVK_CONFIG_PREALLOCATE_DESCRIPTORS` 
+  environment variable by default to preallocate descriptors when a `VkDescriptorPool` is created.
+- Add `MVKConfiguration::apiVersionToAdvertise` and `MVK_CONFIG_API_VERSION_TO_ADVERTISE` 
+  env var to configure **MoltenVK** to advertise a particular _Vulkan_ version.
+- Add `MVKConfiguration::advertiseExtensions` and `MVK_CONFIG_ADVERTISE_EXTENSIONS` 
+  env var to configure **MoltenVK** to force advertising support for no, or minimal, _Vulkan_  extensions.
+- Remove the `Hologram` and `API-Samples` demo apps, and remove 
+  `LunarG/VulkanSamples` as a dependency library.
+- Add `NDEBUG` macro to all Release builds to remove `assert()` calls.
+- Update `VK_MVK_MOLTENVK_SPEC_VERSION` to `31`.
+
+
+
+MoltenVK 1.1.2
+--------------
+
+Released 2021/02/22
+
+- Advertise support for `shaderInt64` feature.
+- Support fast math on MSL compiler via `MVKConfiguration::fastMathEnabled` configuration 
+  setting and `MVK_CONFIG_FAST_MATH_ENABLED` environment variable (enabled by default).
+- Support compiling MSL with position invariance if indicated in SPIRV shader.
+- `vkGetMoltenVKConfigurationMVK()` and `vkSetMoltenVKConfigurationMVK()` functions
+  can now be used with a `VkInstance` from another Vulkan layer, or with a `VK_NULL_HANDLE VkInstance`.
+- `MVKConfiguration` extended to cover all MoltenVK environment variables.
+- Report accurate value of 8 for `VkPhysicalDeviceLimits::maxBoundDescriptorSets`.
+- Advertise macOS M1 GPU as `VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU`.
+- For Vulkan semaphores, prefer using `MTLFence` over `MTLEvent`.
+- Support `immmutableSamplers` with sampler arrays.
+- Query pools write to dedicated temporary internal buffer to span multiple render passes 
+  and support larger query counts.
+- Fixes for race conditions in CTS multithread tests, guarding `MTLDevice` on cross-thread syncing.
+- Set Metal buffer alignment to 256 on non-Apple Silicon iOS/tvOS simulators.
+- `MVKMTLBufferAllocation`: Support device-local temp buffers for tessellation, 
+  indirect multiview, or occlusion queries buffer usage.
+- `MVKPixelFormats`: Enable `RenderTarget` usage for linear textures on Apple GPUs.
+- `MVKRenderPass`: Use a non-trivial granularity for TBDR GPUs.
+- Don't use barriers in render passes on Apple GPUs.
+- `MVKGraphicsPipeline`: Fix color write mask with `RGB9E5` RTs.
+- `MVKImagePlane`: When sync'ing, create the texture if it doesn't exist.
+- `MVKRenderPass`: Don't use `Load/Store` actions for memoryless.
+- `MVKRenderPass`: Only use `MTLStorageModeMemoryless` where available.
+- `MVKDeviceMemory`: Don't consider Memoryless host-accessible on *macOS/tvOS*.
+- `MVKCmdResolveImage` fix incorrectly changing first resolve layer's src/dst base layer.
+- `MVKPhysicalDevice`: Require Mac family 2 for render without attachments.
+- `MVKPhysicalDevice`: Disable SIMD-group permutation for Mac family 1.
+- `MVKPhysicalDevice`: Clamp maximum buffer range to 4 GiB - 1.
+- `MVKMTLBufferAllocation`: Mark temp buffers as volatile.
+- `SPIRVReflection`: Multiple entry point support for `getShaderOutputs()`.
+- Remove obsolete `MVKVector`, which was long ago replaced with `MVKSmallVector`.
+- Remove official support for submitting shaders directly containing MSL source code or compiled MSL code.
+  MSL shaders may still be directly submitted, and may work, but it is not officially supported at this time.
+  Future versions of **MoltenVK** may support direct MSL submission again.
+- Remove `ONLY_ACTIVE_ARCH` from Debug builds. **MoltenVK _Debug_** builds now build for all platform architectures.
+- Add ability to automatically capture first GPU frame by setting `MVKConfiguration::autoGPUCaptureScope`
+  (or environment variable `MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE`) to `2`.
+- Support _GitHub Actions_ for CI builds on pull requests.
+- Support pre-built binary artifacts from _GitHub Actions_ CI builds.
+- `Makefile` and `fetchDependencies` support `xcpretty`, if available.
+- Remove support for _Travis-CI_.
+- Update `VK_MVK_MOLTENVK_SPEC_VERSION` to `30`.
+- Update copyright notices to year 2021.
+- Update Xcode build settings check to _Xcode 12.4_.
+- Support legacy building on _Xcode 11.7_.
+- Update dependency libraries to match *Vulkan SDK 1.2.170*.
+- Update to latest SPIRV-Cross version:
+	- MSL: Gracefully assign automatic input locations to builtin attributes.
+	- MSL: Refactor out location consumption count computation.
+	- MSL: Always return `[[position]]` when required.
+	- MSL: Fix some edge cases in input attachment handling.
+	- MSL: Fix various bugs with framebuffer fetch on macOS and argument buffers.
+	- MSL: Always use input_attachment_index for framebuffer fetch binding.
+	- MSL: Make sure initialized output builtins are considered active.
+	- MSL: Always enable Outputs in vertex stages.
+	- MSL: Only consider builtin variables and flatten builtin arrays if they are part of IO interface.
+	- MSL: Handle load and store to TessLevel array in TESC.
+	- MSL: Fixup type when using tessellation levels in TESC functions.
+	- MSL: Fix automatic assign of builtin attributes in tessellation.
+	- GLSL/MSL: Handle more complicated tessellation Output initializers.
+	- MSL: Emit correct initializer for tessellation control points.
+	- MSL: Handle initializers for tess levels.
+	- MSL: Fix initializer for tess level outputs.
+	- MSL: Fix broken reserved identifier handling for entry points.
+	- MSL: Handle reserved identifiers for entry point.
+	- Fix pathological complexity explosion for certain shaders.
+	- Improve handling of complex variable initialization.
+	- Expose position invariance.
+
+
+MoltenVK 1.1.1
+--------------
+
+Released 2010/12/09
+
+- Add support for extensions:
+	- `VK_KHR_sampler_mirror_clamp_to_edge` (iOS)
+	- `VK_KHR_timeline_semaphore`
+	- `VK_EXT_descriptor_indexing` (initial release limited to Metal Tier 1: 96/128 textures, 16 samplers)
+	- `VK_EXT_post_depth_coverage` (macOS)
+	- `VK_EXT_private_data`
+	- `VK_EXT_subgroup_size_control`
+	- `VK_EXT_texture_compression_astc_hdr`
+	- `VK_AMD_shader_image_load_store` (macOS)
+	- `VK_IMG_format_pvrtc` (macOS)
+- Support the *Mac Catalyst* platform for *iOS* apps on *macOS 11.0+*, 
+  under both `x86_64` and `arm64` architectures.
+- Re-enable `MTLEvent`-based semaphores and fix several `MVKSync` issues.
+- Use `VK_KHR_image_format_list` to disable `MTLTextureUsagePixelFormatView`
+  if only swizzles or `sRGB` conversion will be used for image views, improving 
+  performance on *iOS* by allowing Metal to use lossless texture compression.
+- Handle device loss.
+- Fix crash in `vkUpdateDescriptorSets()` when copying inline block descriptors.
+- Fix Metal validation error when unused elements in an array of sampler are not populated by descriptors.
+- Fix crashes in `vkUseIOSurfaceMVK()` on chroma sampling and double releasing of`MTLTexture`.
+- Fix potential drawable present race conditions.
+- Fix crash in `vkUpdateDescriptorSets()` when copying inline block descriptors.
+- Fix Metal validation error when unused elements in an array of sampler are not populated by descriptors.
+- Move *Metal* drawable presentation from `MTLCommandBuffer` to `MTLDrawable`
+  to improve performance and reduce blocking.
+- Allow binding descriptor set using layout different than it was created with.
+- Report `VkPhysicalDeviceLimits::maxPerStageDescriptorStorageImages` as Metal limit of `8`.
+- Increase per-stage texture count to `96` for A11 SoC's and above.
+- Use variable descriptor count when determining descriptor binding count.
+- Support setting sizes of SPIR-V unsized arrays.
+- Support `MTLStorageTypeMemoryless` for Apple Silicon on Mac.
+- Support Apple GPU pixel formats with Apple Silicon on Mac.
+- Allow linear images on Apple GPUs in Blit and Clear commands.
+- Apple family 7 GPUs (A14) on iOS support multisample layered rendering, 
+  as well as sampler border colors and the mirror clamp to edge sampler address mode.
+- Set fill mode, depth bias, viewport, and scissor states before clearing attachments
+- Disable culling for the duration of `vkCmdClearAttachments()`
+- `MVKDevice` increase minimum OS for shared-storage textures.
+- `MVKDevice` set properties for Apple Silicon GPUs on macOS.
+- `MVKQueue` only create one `GPUCaptureScope` per queue.
+- `MVKSamplerYcbcrConversion` always make sure there is one plane.
+- `MVKPhysicalDevice` correct fragment input component limit.
+- `MVKPhysicalDevice` set max visibility buffer size to 256 kiB where supported.
+- `MVKPhysicalDevice` expose support for interpolation functions.
+- `MVKPhysicalDevice` enable 3D compressed textures on *iOS/tvOS*, and forbid ETC2 and EAC 
+   3D textures on all platforms. Apple GPUs do not support 3D for those.
+- `MVKPhysicalDevice` enable Apple family 7 features on *iOS*.
+- `MVKPhysicalDevice` remove need to call `initGPUInfoProperties()` twice.
+- `MVKPhysicalDevice` correct max descriptor set resources.
+- `MVKPhysicalDevice` reduce maximum point size to 64.
+- `MVKPhysicalDevice` enable strictLines for Intel and NVIDIA.
+- `MVKPhysicalDevice` enable `shaderResourceMinLod` on *iOS*.
+- `MVKPhysicalDevice` set correct subgroup properties.
+- `MVKPhysicalDevice` enable texture swizzle on all Apple GPUs.
+- `MVKPipelineLayout` only set configuration result if validating.
+- `MVKPipeline` fix calculation of atomic image buffer addresses.
+- `MVKPipeline` disable rasterization if culling both sides and don't try to add a fragment shader.
+- `MVKPipeline` shorten vertex attribute format's length when `stride` < `size`.
+- `MVKGraphicsPipeline` handle `minSampleShading`.
+- `MVKImage` always use texel buffers for linear images in `MTLHeaps`.
+- `MVKImage` make sure plane heap offsets are properly aligned.
+- `MVKImage` always set the depth plane when rendering to a 3D image.
+- `MVKImage` avoid swizzling storage and/or attachment image views.
+- `MVKImage` avoid texel buffer for atomics if view format list
+    exists and does not include either `R32_UINT` or `R32_SINT` format.
+- `MVKImageView` always ignore transfer usages.
+- `MVKBufferView` avoid triggering `bytesPerRow` validation warning.
+- `MVKDescriptorSetLayout` speed up lookup of descriptor index and streamline binding access.
+- `MVKCmdBlitImage` use layered draws when possible.
+- `MVKCmdBlitImage` add 0.5 to layer index before interpolating.
+- `MVKCmdBlitImage` support depth/stencil blits with inversion and scaling.
+- `MVKSwapchain`  allow images whose size doesn't match the `CAMetalLayer`.
+- `MVKPixelFormats` add 0.5 ULP to clear values for normalized formats.
+- `MVKCommandEncoder` don't set `renderTargetArrayLength` for mixed 2D/3D renders.
+- `MVKExtensions` add missing *tvOS* case for unsupported extensions.
+- `MVKDescriptorSetLayout` sort and hold bindings by binding number.
+- `MVKDescriptor` simplify subclass implementations.
+- `MVKComputePipeline` override max threads per threadgroup.
+- `MVKGPUCapture` make sure the `MTLCaptureScope` has only one reference.
+- `MoltenShaderConverter` fix *tvOS* build to support *tvOS 9.0*.
+- Support building external libraries and dylibs against sanitizers.
+- Clarify documentation on mapping limitations for host-coherent image memory on *macOS*.
+- Add validation policy for MoltenVK development to `README.md` document.
+- Update Xcode build settings check to Xcode 12.2.
+- Update `VK_MVK_MOLTENVK_SPEC_VERSION` to `29`.
+- Update dependency libraries to match *Vulkan SDK 1.2.162*.
+- Update to latest SPIRV-Cross version:
+	- MSL: Support `SPV_EXT_demote_to_helper_invocation` for MSL 2.3.
+	- MSL: Support run-time sized image and sampler arrays
+        (`GL_EXT_nonuniform_qualifier/SPV_EXT_descriptor_indexing`).
+	- MSL: Support atomic access to images from argument buffers.
+	- MSL: Add missing interlock handling to atomic image buffers.
+	- MSL: Fix calculation of atomic image buffer address.
+	- MSL: Support querying and modifying generated combined sampler suffix.
+	- MSL: Don't use a bitcast for tessellation levels in tesc shaders.
+	- MSL: Handle Offset and Grad operands for 1D-as-2D textures.
+	- MSL: Don't remove periods from swizzle buffer index exprs.
+	- MSL: Correct definitions of subgroup ballot mask variables.
+	- MSL: Extract global variables from subgroup ballot operations.
+	- MSL: Mask ballots passed to ballot bit ops.
+	- MSL: Don't mask off inactive bits in ballot masks.
+	- MSL: Support vectors with `OpGroupNonUniformAllEqual`.
+	- MSL: Cast broadcast booleans to `ushort`.
+	- MSL: Do not use `component::x` gather for `depth2d` textures.
+	- MSL: For 2.1+, don't disable rasterization for vertex writes.
+	- MSL: Allow post-depth coverage on Mac in MSL 2.3.
+	- MSL: Allow framebuffer fetch on Mac in MSL 2.3.
+	- MSL: Allow Bias and Grad arguments with comparison on Mac in MSL 2.3.
+	- MSL: Support pull-model interpolation on MSL 2.3+
+	- MSL: Expand subgroup support.
+	- MSL: Adjust `FragCoord` for sample-rate shading.
+	- MSL: Expose some more features on iOS: `min_lod_clamp()`, `simd_is_helper_thread()`,
+	    `barycentric_coord`, and `primitive_id`.
+	- MSL: Don't add fixup hooks for builtin variables if they're unused.
+	- MSL: Don't try to use `[[thread_index_in_simdgroup]]` in vertex shaders.
+	- Handle case where block is loop header, continue AND break block.
+	- MSL: Added `fmin3` and `fmax3` library functions to the illegal name list.
+	- Added Metal keyword: `level`.
+	- Parser: Don't assume `OpTypePointer` will always take a `SPIRType`.
+	- Add MIT dual license for the SPIRV-Cross API and CLI.
+
+
+
+MoltenVK 1.1.0
+--------------
+
+Released 2020/09/28
+
+>**_Note:_** This release contains changes to library paths and framework linking options.
+
+- Add support for Vulkan 1.1, including:
+	- The `vkEnumerateInstanceVersion()` function
+	- The `vkGetDeviceQueue2()` function
+	- Protected memory (non-functional)
+	- A feature struct for `VK_KHR_shader_draw_parameters`
+	- All extensions that were promoted to core in Vulkan 1.1
+- Add support for extensions:
+	- `VK_KHR_portability_subset`
+	- `VK_KHR_create_renderpass2`
+	- `VK_KHR_depth_stencil_resolve`
+	- `VK_KHR_external_fence` (non-functional groundwork for future extensions,
+	  including support for GCD and Mach semaphores)
+	- `VK_KHR_external_fence_capabilities` (non-functional groundwork for future
+	  extensions, including support for GCD and Mach semaphores)
+	- `VK_KHR_external_semaphore` (non-functional groundwork for future
+	  `MTLSharedEvent` Vulkan extension)
+	- `VK_KHR_external_semaphore_capabilities` (non-functional groundwork for
+	  future `MTLSharedEvent` Vulkan extension)
+	- `VK_KHR_multiview`
+	- `VK_KHR_shader_subgroup_extended_types`
+- Remove support for obsolete `VK_EXTX_portability_subset` extension.
+- Redesign build and linking options that leverage newer framework technology:
+	- Add comprehensive support for multi-platform, multi-architecture `XCFrameworks`.
+	- Build fat single-platform, multi-architecture `dylibs`.
+	- Add support for *Apple Silicon* builds for *macOS* and *Simulators*.
+	- Remove support for distinct legacy frameworks and static libraries.
+	- Remove support for fat libraries and frameworks that span device and simulators.
+	- Combine `MoltenVKSPIRVToMSLConverter` and `MoltenVKGLSLToSPIRVConverter` frameworks 
+	  into a single `MoltenVKShaderConverter` framework.
+- Support copying between 3D and 2D images.
+- Support clearing 3D images.
+- Support linear images and buffer views in shared memory on *macOS 10.15.5+*.
+- Support `VK_IMAGE_CREATE_EXTENDED_USAGE_BIT`.
+- Support multiple aliased images for dedicated image memory allocations.
+- Improve performance of tessellation control pipeline stage by processing multiple 
+  patches per workgroup.
+- `vkCmdBindDescriptorSets` order `pDynamicOffsets` by descriptor binding number 
+  within each descriptor set.
+- `vkCmdCopyImage` on macOS flush non-coherent image memory before copy operation.
+- Process multiple patches per workgroup in a tessellation control shader.
+- Initialize tessellation related variables conditionally in indirect draws.
+- Fix build errors on Simulator not supporting `MTLDrawable` present time options.
+- Fix `dynamicOffsets` ordering based on binding index.
+- Ensure the base texture is created when creating a view texture.
+- Fix features, alignment, and image properties of chroma subsampled formats.
+- Disable `variableMultisampleRate` feature.
+- Permit renderpass to have no attachments.
+- Clear linear images using a compute shader.
+- Reject attempts to create compressed linear images.
+- Always use a texel buffer for atomic linear storage images.
+- Use deferred store actions instead of tracking multi-pass draws.
+- Use `MTLRenderPassDescriptor renderTargetWidth` and `renderTargetHeight` on macOS 10.15 and newer.
+- Use a 2D non-arrayed view for 2D non-arrayed attachments.
+- Use arrayed textures for layered subpass input.
+- Use layered rendering when clearing or resolving images whenever possible,
+  and take `renderArea` into account.
+- Streamline image copying when the entire source is being copied to the entire destination.
+- Don't set `renderTargetArrayLength` on devices that don't support it.
+- Don't attempt to clear unused attachments and fix vertex count for clearing multiple layers.
+- Don't encode commands that draw zero vertices.
+- Ignore `addressModeW`  on samplers with unnormalized coordinates.
+- Flip GPU when swapchain is created, not when device object is created,
+  to optimize this condition if it is not needed.
+- Flush source image of a transfer on *macOS*.
+- Fix offset for texel buffers and heaps for multi-planar images.
+- Fix memory leak when object create fails.
+- Fix several use-after-freed errors.
+- Fix applying divisors to instanced vertex attributes.
+- Fix issue in accessing `MTLTexture` for swapchain image planes.
+- Fix occasional crash on vertex stage indirect draws.
+- Fix reported image format properties for 1D images as 2D.
+- `VK_EXT_vertex_attribute_divisor` fix issues with zero divisors.
+- Re-add support for bitcode generation on *iOS* and *tvOS*.
+- `fetchDependencies` builds serially by default for better build script integration. 
+- Combine `MoltenVKSPIRVToMSLConverter` and `MoltenVKGLSLToSPIRVConverter` 
+  frameworks into a single `MoltenVKShaderConverter` framework.
+- Fix Metal validation error when occlusion query and renderpass are in separate 
+  Vulkan command buffers.
+- Fix a crash on starting a query outside a render pass.
+- Fix Metal validation error that forbids rendering to an image of zero size.
+- Fix issue where descriptor pool releasing descriptor sets it doesn't own.
+- Fix issue where load/store actions not set in renderpass that includes compute stage.
+- Prevent accidental `setColorStoreAction` for non-color attachments.
+- Fix image copy destination extent of compressed images.
+- Fix image resolve sub-region extent.
+- Fix owner of merged `MVKShaderLibraries`.
+- Fix rounding of buffer sizing when `VK_WHOLE_SIZE` is used.
+- Fix detection of indexed draw calls.
+- `vkSetMTLTextureMVK()` Fix crash if incoming `MTLTexture` does not have an associated `IOSurface`. 
+- Update dependency libraries to match *Vulkan SDK 1.2.154*.
+- Update to latest SPIRV-Cross version:
+	- MSL: Fix handling of matrices and structs in the output control point array.
+	- MSL: Enclose args when convert `distance(a,b)` to `abs(a-b)`.
+	- MSL: Fix multiview view index calculation with a non-zero base instance.
+	- MSL: Don't set the layer for multiview if the device doesn't support it.
+	- MSL: Fix `OpCompositeInsert` and `OpVectorInsertDynamic`.
+	- MSL: Support layered input attachments.
+	- Ensure that we use primary alias type when emitting flattened members.
+	- Only rewrite type aliases for the base type.
+	- Overhaul how we deal with reserved identifiers.
+	- Implement a simple evaluator of specialization constants.
+	- Deal with case where a selection construct conditionally merges/breaks.
+	- Allow `flip_vert_y` in all relevant stages.
+	- Clean up conditional branch codegen.
+
+
+
+MoltenVK 1.0.44
+---------------
+
+Released 2020/07/28
+
+- Add support for extensions:
+	- `VK_KHR_driver_properties`
+	- `VK_KHR_sampler_ycbcr_conversion`
+	- `VK_EXT_image_robustness`
+	- `VK_EXT_robustness2`
+- Add native support for `VK_FORMAT_D16_UNORM` on **_iOS 13.0+_** and **_tvOS 13.0+_**.
+- Add support for **_tvOS_** platform.
+- Add support for **_iOS Simulator_** and **_tvOS Simulator_** build destinations.
+- Cube demo runs on **_tvOS_**, **_iOS Simulator_**, and **_tvOS Simulator_**.
+- **_MoltenVK_** Xcode schemes support building fat *Platform+Simulator* binaries.
+- `Makefile` supports building fat *Platform+Simulator* binaries, plus *Debug* builds.
+- `fetchDependencies` script supports platform build selection, plus parallel builds.
+- `vkCmdBlitImage()` returns error if scaling or inverting to linear image on *macOS*.
+- Support `VK_FORMAT_A2B10G10R10_UNORM_PACK32` as a surface format.
+- Support `VkPipelineMultisampleStateCreateInfo::pSampleMask`.
+- Support `VkPhysicalDeviceSubgroupProperties`.
+- Fix memory layout of inline uniform blocks.
+- Fix issue where mapped host-coherent device memory not updated from image contents on *macOS*.
+- Fix image memory sizing and offsets.
+- Fix small memory leak when setting swapchain color space.
+- Fix new and unexpected App Store failure on newly deprecated color space values.
+- Fix intermittent concurrent shader specialization race condition.
+- Fix offsets when flushing buffer data to GPU.
+- Fix issue where expected buffer-sizes buffer not bound to Metal compute encoder.
+- Ensure fragment shader inputs to have as many components as vertex shader outputs.
+- Include vertex attribute size when testing whether attribute offset exceeds stride.
+- Add support for `USCALED/SSCALED` vertex formats.
+- Add host-coherent texel buffer caching just for buffer views.
+- Include MoltenVK Git revision hash in `VkPhysicalDeviceProperties::pipelineCacheUUID`.
+- Add `MVKPhysicalDeviceMetalFeatures::vertexStrideAlignment` to track Metal vertex binding stride alignment.
+- Add `MVKPhysicalDeviceMetalFeatures::indirectTessellationDrawing` to track if indirect tessellation drawing is supported.
+- Remove use of `@available()` directive as it was causing issues in some build environments.
+- Pass pipeline sample mask, if present, to SPIRV-Cross.
+- Refactor **MoltenVK** *Xcode* build architectures.
+- Demo `API-Samples generateSPIRVShaders` no longer builds `MoltenVKShaderController` tool.
+- Update `VK_MVK_MOLTENVK_SPEC_VERSION` to `27`.
+- Update dependency libraries to match *Vulkan SDK 1.2.148*.
+- Update to latest SPIRV-Cross version:
+	- MSL: Add support for processing more than one patch per workgroup.
+	- MSL: Workaround broken scalar access chain behavior in MSL LLVM IR / AIR.
+	- MSL: Do not emit swizzled writes in packing fixups.
+	- MSL: Ensure `OpStore` source operands are marked for inclusion in function arguments.
+	- MSL: Enabling setting an additional fixed `sampleMask` in fragment shaders.
+	- MSL: Remove obsolete `MSLVertexAttr` and `MSLShaderInput` members.
+	- MSL: Fix up input variables' vector lengths in all stages.
+	- MSL: Improve handling of array types in buffer objects.
+	- MSL: Deal with loading non-value-type arrays.
+	- MSL: Deal with array load-store in buffer-block structs.
+	- MSL: Use input attachment index directly for resource index fallback.
+	- Fix missing switch cases in `Y'CbCr` conversion.
+	- Implement context-sensitive expression read tracking.
+
+
+
+MoltenVK 1.0.43
+---------------
+
+Released 2020/06/09
+
+- Fix issue in reporting properties of substitutable `VkFormats`.
+- Fix vertex attribute offset adjustments when vertex buffer stride is zero.
+- Update `fetchDependencies` script to use pre-built `spirv-tools` files by default.
+- Update `maxVertexInputBindingStride` and `maxVertexInputAttributeOffset` 
+  to minimum Vulkan values.
+- Numerous documentation typo corrections.
+- Update `VK_MVK_MOLTENVK_SPEC_VERSION` to `26`.
+- Update Travis CI to Xcode 11.5.
 
 
 
 MoltenVK 1.0.42
 ---------------
 
-Released TBD
+Released 2020/06/01
 
+- Add support for extensions:
+	- `VK_GOOGLE_display_timing`
+	- `VK_KHR_external_memory` (non-functional groundwork for future 
+	  Metal-resource Vulkan extension).
+	- `VK_KHR_external_memory_capabilities` (non-functional groundwork 
+	   for future Metal-resource Vulkan extension).
+- Memory consumption improvements in command handling and vector pre-allocation optimizations.
+- `vkQueuePresentKHR()` returns a `VkResult` for each swapchain.
+- `MVKPipeline` disable fragment shader outputs for unused attachments.
+- `MVKBuffer` support texel buffers in host-coherent memory on Mac.
+- `MVKDescriptor` pass buffers to shaders that do atomic image accesses.
+- Support vertex attribute offsets larger than the vertex buffer stride.
+- Fix crash when more than two GPUs.
+- Fix issue where `vkGetPhysicalDeviceFormatProperties()` incorrectly returned 
+  properties for unsupported formats.
+- Fix stack overflow in when logging and reporting very long messages.
+- Fix situation where compute pipeline state not retained across copy and renderpass operations.
+- Fix buffer offset calculation.
+- Fixes to maximum FPS calculations.
+- Fix buffer size passed to shaders when `VkDescriptorBufferInfo.range` set to `VK_WHOLE_SIZE`.
+- Update maximum number of framebuffer layers to 2048.
+- Support stencil only image formats in identity swizzle case.
+- Enables format atomic capabilities only when format supports it.
+- Add `MVKSmallVector` as a more memory efficient substitute of `MVKVector`.
 - Reinstate `VulkanSamples API-Samples` demo apps and add 
   `input_attachment` and `push_descriptors` demos.
-- `vkQueuePresentKHR()` returns a `VkResult` for each swapchain.
+- Add `MVK_CONFIG_AUTO_GPU_CAPTURE_OUTPUT_FILE` environment variable 
+  to support capturing GPU traces to a file.
 - Consolidate frame and non-frame performance reporting.
 	- Remove `vkGetSwapchainPerformanceMVK()` from API.
 	- Swapchain performance can be retrieved with other activity performance 
 	  through `vkGetPerformanceStatisticsMVK()`.
 	- Add `MVK_CONFIG_PERFORMANCE_LOGGING_INLINE` env var to enable/disable
 	  logging of performance of each activity when it happens. 
+	- Reduce thread locking on performance statistics collection.
+- Numerous documentation typo corrections.
+- Support Xcode 11.5.
+- Update dependency libraries to match *Vulkan SDK 1.2.141*.
+- Update to latest SPIRV-Cross version:
+	- MSL: mark `BuiltInFragCoord` as implicitly used for subpass reads.
+	- MSL: Deal with cases where builtin is implicitly needed, declared, but unused.
+	- MSL: Do not use base expression with PhysicalTypeID `OpCompositeExtract`.
+	- MSL: Add options to control emission of fragment outputs.
+	- MSL: Force disabled fragment builtins to have the right name.
+	- MSL: Allow removing clip distance user varyings.
+	- MSL: Support edge case with DX layout in scalar block layout.
+	- MSL: Deal correctly with initializers on Private variables.
+	- MSL: Fix case where `subpassInput` is passed to leaf functions.
+	- MSL: Redirect member indices when buffer has been sorted by Offset.
+	- MSL: If the packed type is scalar, don't emit "pack_" prefix.
+	- MSL: Avoid packed arrays in more cases.
+	- Do not add NonWritable/NonReadable decorations for regular images.
+	- Expose a query if samplers or images are comparison resources.
 
 
 

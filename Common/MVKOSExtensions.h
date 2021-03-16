@@ -1,7 +1,7 @@
 /*
  * MVKOSExtensions.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,16 @@
 
 #pragma once
 
+#include "MVKCommonEnvironment.h"
 #include <dispatch/dispatch.h>
 #include <string>
+#include <limits>
 
 
 typedef float MVKOSVersion;
+
+/*** Constant indicating unsupported functionality in an OS. */
+static const MVKOSVersion kMVKOSVersionUnsupported = std::numeric_limits<MVKOSVersion>::max();
 
 /**
  * Returns the operating system version as an MVKOSVersion, which is a float in which the
@@ -33,8 +38,28 @@ typedef float MVKOSVersion;
  */
 MVKOSVersion mvkOSVersion();
 
+/** Returns a MVKOSVersion built from the version components. */
+inline MVKOSVersion mvkMakeOSVersion(uint32_t major, uint32_t minor, uint32_t patch) {
+	return (float)major + ((float)minor / 100.0f) + ((float)patch / 10000.0f);
+}
+
 /** Returns whether the operating system version is at least minVer. */
 inline bool mvkOSVersionIsAtLeast(MVKOSVersion minVer) { return mvkOSVersion() >= minVer; }
+
+/**
+ * Returns whether the operating system version is at least the appropriate min version.
+ * The constant kMVKOSVersionUnsupported can be used for either value to cause the test
+ * to always fail on that OS, which is useful for indidicating functionalty guarded by
+ * this test is not supported on that OS.
+ */
+inline bool mvkOSVersionIsAtLeast(MVKOSVersion macOSMinVer, MVKOSVersion iOSMinVer) {
+#if MVK_MACOS
+	return mvkOSVersionIsAtLeast(macOSMinVer);
+#endif
+#if MVK_IOS_OR_TVOS
+	return mvkOSVersionIsAtLeast(iOSMinVer);
+#endif
+}
 
 /**
  * Returns a monotonic timestamp value for use in Vulkan and performance timestamping.
@@ -93,26 +118,35 @@ int64_t mvkGetEnvVarInt64(std::string varName, bool* pWasFound = nullptr);
  */
 bool mvkGetEnvVarBool(std::string varName, bool* pWasFound = nullptr);
 
-#define MVK_SET_FROM_ENV_OR_BUILD_BOOL(cfgVal, EV)	\
-	do {											\
-		bool wasFound = false;						\
-		bool ev = mvkGetEnvVarBool(#EV, &wasFound);	\
-		cfgVal = wasFound ? ev : EV;				\
+#define MVK_SET_FROM_ENV_OR_BUILD_BOOL(cfgVal, EV)				\
+	do {														\
+		bool wasFound = false;									\
+		bool ev = mvkGetEnvVarBool(#EV, &wasFound);				\
+		cfgVal = wasFound ? ev : EV;							\
 	} while(false)
 
-#define MVK_SET_FROM_ENV_OR_BUILD_INT64(cfgVal, EV)		\
-	do {												\
-		bool wasFound = false;							\
-		int64_t ev = mvkGetEnvVarInt64(#EV, &wasFound);	\
-		cfgVal = wasFound ? ev : EV;					\
+#define MVK_SET_FROM_ENV_OR_BUILD_INT64(cfgVal, EV)				\
+	do {														\
+		bool wasFound = false;									\
+		int64_t ev = mvkGetEnvVarInt64(#EV, &wasFound);			\
+		cfgVal = wasFound ? ev : EV;							\
 	} while(false)
 
+// Pointer cast permits cfgVal to be an enum var
 #define MVK_SET_FROM_ENV_OR_BUILD_INT32(cfgVal, EV)				\
 	do {														\
 		bool wasFound = false;									\
 		int64_t ev = mvkGetEnvVarInt64(#EV, &wasFound);			\
 		int64_t val = wasFound ? ev : EV;						\
-		cfgVal = (int32_t)std::min(std::max(val, (int64_t)INT32_MIN), (int64_t)INT32_MAX);	\
+		*(int32_t*)&cfgVal = (int32_t)std::min(std::max(val, (int64_t)INT32_MIN), (int64_t)INT32_MAX);	\
+	} while(false)
+
+#define MVK_SET_FROM_ENV_OR_BUILD_STRING(cfgVal, EV, strObj)	\
+	do {														\
+		bool wasFound = false;									\
+		std::string ev = mvkGetEnvVar(#EV, &wasFound);			\
+		strObj = wasFound ? std::move(ev) : EV;					\
+		cfgVal = strObj.c_str();								\
 	} while(false)
 
 

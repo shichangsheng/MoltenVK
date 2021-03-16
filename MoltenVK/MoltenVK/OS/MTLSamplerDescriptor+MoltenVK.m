@@ -1,7 +1,7 @@
 /*
  * MTLSamplerDescriptor+MoltenVK.m
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,8 @@
 
 
 #include "MTLSamplerDescriptor+MoltenVK.h"
-#include "MVKEnvironment.h"
+#include "MVKCommonEnvironment.h"
+
 
 @implementation MTLSamplerDescriptor (MoltenVK)
 
@@ -32,14 +33,14 @@
 }
 
 -(NSUInteger) borderColorMVK {
-#if MVK_MACOS
+#if MVK_MACOS_OR_IOS
 	if ( [self respondsToSelector: @selector(borderColor)] ) { return self.borderColor; }
 #endif
 	return /*MTLSamplerBorderColorTransparentBlack*/ 0;
 }
 
 -(void) setBorderColorMVK: (NSUInteger) color {
-#if MVK_MACOS
+#if MVK_MACOS_OR_IOS
 	if ( [self respondsToSelector: @selector(setBorderColor:)] ) { self.borderColor = (MTLSamplerBorderColor) color; }
 #endif
 }

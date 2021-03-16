@@ -1,7 +1,7 @@
 /*
  * mvk_datatypes.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include "MVKFoundation.h"
 #include "MVKOSExtensions.h"
 #include "MVKBaseObject.h"
-#include <MoltenVKSPIRVToMSLConverter/SPIRVReflection.h>
+#include <MoltenVKShaderConverter/SPIRVReflection.h>
 #include <unordered_map>
 #include <string>
 #include <limits>
@@ -35,67 +35,67 @@ using namespace std;
 static MVKPixelFormats _platformPixelFormats;
 
 MVK_PUBLIC_SYMBOL bool mvkVkFormatIsSupported(VkFormat vkFormat) {
-	return _platformPixelFormats.vkFormatIsSupported(vkFormat);
+	return _platformPixelFormats.isSupported(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL bool mvkMTLPixelFormatIsSupported(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.mtlPixelFormatIsSupported(mtlFormat);
+	return _platformPixelFormats.isSupported(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL MVKFormatType mvkFormatTypeFromVkFormat(VkFormat vkFormat) {
-	return _platformPixelFormats.getFormatTypeFromVkFormat(vkFormat);
+	return _platformPixelFormats.getFormatType(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL MVKFormatType mvkFormatTypeFromMTLPixelFormat(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getFormatTypeFromMTLPixelFormat(mtlFormat);
+	return _platformPixelFormats.getFormatType(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL MTLPixelFormat mvkMTLPixelFormatFromVkFormat(VkFormat vkFormat) {
-	return _platformPixelFormats.getMTLPixelFormatFromVkFormat(vkFormat);
+	return _platformPixelFormats.getMTLPixelFormat(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL VkFormat mvkVkFormatFromMTLPixelFormat(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getVkFormatFromMTLPixelFormat(mtlFormat);
+	return _platformPixelFormats.getVkFormat(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL uint32_t mvkVkFormatBytesPerBlock(VkFormat vkFormat) {
-	return _platformPixelFormats.getVkFormatBytesPerBlock(vkFormat);
+	return _platformPixelFormats.getBytesPerBlock(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL uint32_t mvkMTLPixelFormatBytesPerBlock(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getMTLPixelFormatBytesPerBlock(mtlFormat);
+	return _platformPixelFormats.getBytesPerBlock(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL VkExtent2D mvkVkFormatBlockTexelSize(VkFormat vkFormat) {
-	return _platformPixelFormats.getVkFormatBlockTexelSize(vkFormat);
+	return _platformPixelFormats.getBlockTexelSize(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL VkExtent2D mvkMTLPixelFormatBlockTexelSize(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getMTLPixelFormatBlockTexelSize(mtlFormat);
+	return _platformPixelFormats.getBlockTexelSize(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL float mvkVkFormatBytesPerTexel(VkFormat vkFormat) {
-	return _platformPixelFormats.getVkFormatBytesPerTexel(vkFormat);
+	return _platformPixelFormats.getBytesPerTexel(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL float mvkMTLPixelFormatBytesPerTexel(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getMTLPixelFormatBytesPerTexel(mtlFormat);
+	return _platformPixelFormats.getBytesPerTexel(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL size_t mvkVkFormatBytesPerRow(VkFormat vkFormat, uint32_t texelsPerRow) {
-	return _platformPixelFormats.getVkFormatBytesPerRow(vkFormat, texelsPerRow);
+	return _platformPixelFormats.getBytesPerRow(vkFormat, texelsPerRow);
 }
 
 MVK_PUBLIC_SYMBOL size_t mvkMTLPixelFormatBytesPerRow(MTLPixelFormat mtlFormat, uint32_t texelsPerRow) {
-	return _platformPixelFormats.getMTLPixelFormatBytesPerRow(mtlFormat, texelsPerRow);
+	return _platformPixelFormats.getBytesPerRow(mtlFormat, texelsPerRow);
 }
 
 MVK_PUBLIC_SYMBOL size_t mvkVkFormatBytesPerLayer(VkFormat vkFormat, size_t bytesPerRow, uint32_t texelRowsPerLayer) {
-	return _platformPixelFormats.getVkFormatBytesPerLayer(vkFormat, bytesPerRow, texelRowsPerLayer);
+	return _platformPixelFormats.getBytesPerLayer(vkFormat, bytesPerRow, texelRowsPerLayer);
 }
 
 MVK_PUBLIC_SYMBOL size_t mvkMTLPixelFormatBytesPerLayer(MTLPixelFormat mtlFormat, size_t bytesPerRow, uint32_t texelRowsPerLayer) {
-	return _platformPixelFormats.getMTLPixelFormatBytesPerLayer(mtlFormat, bytesPerRow, texelRowsPerLayer);
+	return _platformPixelFormats.getBytesPerLayer(mtlFormat, bytesPerRow, texelRowsPerLayer);
 }
 
 MVK_PUBLIC_SYMBOL VkFormatProperties mvkVkFormatProperties(VkFormat vkFormat) {
@@ -103,40 +103,40 @@ MVK_PUBLIC_SYMBOL VkFormatProperties mvkVkFormatProperties(VkFormat vkFormat) {
 }
 
 MVK_PUBLIC_SYMBOL const char* mvkVkFormatName(VkFormat vkFormat) {
-	return _platformPixelFormats.getVkFormatName(vkFormat);
+	return _platformPixelFormats.getName(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL const char* mvkMTLPixelFormatName(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getMTLPixelFormatName(mtlFormat);
+	return _platformPixelFormats.getName(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL MTLVertexFormat mvkMTLVertexFormatFromVkFormat(VkFormat vkFormat) {
-	return _platformPixelFormats.getMTLVertexFormatFromVkFormat(vkFormat);
+	return _platformPixelFormats.getMTLVertexFormat(vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL MTLClearColor mvkMTLClearColorFromVkClearValue(VkClearValue vkClearValue,
 																 VkFormat vkFormat) {
-	return _platformPixelFormats.getMTLClearColorFromVkClearValue(vkClearValue, vkFormat);
+	return _platformPixelFormats.getMTLClearColor(vkClearValue, vkFormat);
 }
 
 MVK_PUBLIC_SYMBOL double mvkMTLClearDepthFromVkClearValue(VkClearValue vkClearValue) {
-	return _platformPixelFormats.getMTLClearDepthFromVkClearValue(vkClearValue);
+	return _platformPixelFormats.getMTLClearDepthValue(vkClearValue);
 }
 
 MVK_PUBLIC_SYMBOL uint32_t mvkMTLClearStencilFromVkClearValue(VkClearValue vkClearValue) {
-	return _platformPixelFormats.getMTLClearStencilFromVkClearValue(vkClearValue);
+	return _platformPixelFormats.getMTLClearStencilValue(vkClearValue);
 }
 
 MVK_PUBLIC_SYMBOL bool mvkMTLPixelFormatIsDepthFormat(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.mtlPixelFormatIsDepthFormat(mtlFormat);
+	return _platformPixelFormats.isDepthFormat(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL bool mvkMTLPixelFormatIsStencilFormat(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.mtlPixelFormatIsStencilFormat(mtlFormat);
+	return _platformPixelFormats.isStencilFormat(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL bool mvkMTLPixelFormatIsPVRTCFormat(MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.mtlPixelFormatIsPVRTCFormat(mtlFormat);
+	return _platformPixelFormats.isPVRTCFormat(mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL MTLTextureType mvkMTLTextureTypeFromVkImageType(VkImageType vkImageType,
@@ -144,12 +144,12 @@ MVK_PUBLIC_SYMBOL MTLTextureType mvkMTLTextureTypeFromVkImageType(VkImageType vk
 																  bool isMultisample) {
 	switch (vkImageType) {
 		case VK_IMAGE_TYPE_3D: return MTLTextureType3D;
-		case VK_IMAGE_TYPE_1D: return (mvkTreatTexture1DAs2D()
+		case VK_IMAGE_TYPE_1D: return (mvkGetMVKConfiguration()->texture1DAs2D
 									   ? mvkMTLTextureTypeFromVkImageType(VK_IMAGE_TYPE_2D, arraySize, isMultisample)
 									   : (arraySize > 1 ? MTLTextureType1DArray : MTLTextureType1D));
 		case VK_IMAGE_TYPE_2D:
 		default: {
-#if MVK_MACOS
+#if MVK_MACOS_OR_IOS
 			if (arraySize > 1 && isMultisample) { return MTLTextureType2DMultisampleArray; }
 #endif
 			if (arraySize > 1) { return MTLTextureType2DArray; }
@@ -176,8 +176,8 @@ MVK_PUBLIC_SYMBOL MTLTextureType mvkMTLTextureTypeFromVkImageViewType(VkImageVie
 		case VK_IMAGE_VIEW_TYPE_3D:			return MTLTextureType3D;
 		case VK_IMAGE_VIEW_TYPE_CUBE:		return MTLTextureTypeCube;
 		case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:	return MTLTextureTypeCubeArray;
-		case VK_IMAGE_VIEW_TYPE_1D:			return mvkTreatTexture1DAs2D() ? mvkMTLTextureTypeFromVkImageViewType(VK_IMAGE_VIEW_TYPE_2D, isMultisample) : MTLTextureType1D;
-		case VK_IMAGE_VIEW_TYPE_1D_ARRAY:	return mvkTreatTexture1DAs2D() ? mvkMTLTextureTypeFromVkImageViewType(VK_IMAGE_VIEW_TYPE_2D_ARRAY, isMultisample) : MTLTextureType1DArray;
+		case VK_IMAGE_VIEW_TYPE_1D:			return mvkGetMVKConfiguration()->texture1DAs2D ? mvkMTLTextureTypeFromVkImageViewType(VK_IMAGE_VIEW_TYPE_2D, isMultisample) : MTLTextureType1D;
+		case VK_IMAGE_VIEW_TYPE_1D_ARRAY:	return mvkGetMVKConfiguration()->texture1DAs2D ? mvkMTLTextureTypeFromVkImageViewType(VK_IMAGE_VIEW_TYPE_2D_ARRAY, isMultisample) : MTLTextureType1DArray;
 
 		case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
 #if MVK_MACOS
@@ -192,11 +192,11 @@ MVK_PUBLIC_SYMBOL MTLTextureType mvkMTLTextureTypeFromVkImageViewType(VkImageVie
 }
 
 MVK_PUBLIC_SYMBOL MTLTextureUsage mvkMTLTextureUsageFromVkImageUsageFlags(VkImageUsageFlags vkImageUsageFlags, MTLPixelFormat mtlPixFmt) {
-	return _platformPixelFormats.getMTLTextureUsageFromVkImageUsageFlags(vkImageUsageFlags, mtlPixFmt);
+	return _platformPixelFormats.getMTLTextureUsage(vkImageUsageFlags, mtlPixFmt);
 }
 
 MVK_PUBLIC_SYMBOL VkImageUsageFlags mvkVkImageUsageFlagsFromMTLTextureUsage(MTLTextureUsage mtlUsage, MTLPixelFormat mtlFormat) {
-	return _platformPixelFormats.getVkImageUsageFlagsFromMTLTextureUsage(mtlUsage, mtlFormat);
+	return _platformPixelFormats.getVkImageUsageFlags(mtlUsage, mtlFormat);
 }
 
 MVK_PUBLIC_SYMBOL uint32_t mvkSampleCountFromVkSampleCountFlagBits(VkSampleCountFlagBits vkSampleCountFlag) {
@@ -291,7 +291,7 @@ MVK_PUBLIC_SYMBOL MTLSamplerAddressMode mvkMTLSamplerAddressModeFromVkSamplerAdd
 	}
 }
 
-#if MVK_MACOS
+#if MVK_MACOS_OR_IOS
 MVK_PUBLIC_SYMBOL MTLSamplerBorderColor mvkMTLSamplerBorderColorFromVkBorderColor(VkBorderColor vkColor) {
 	switch (vkColor) {
 		case VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK:	return MTLSamplerBorderColorTransparentBlack;
@@ -380,6 +380,17 @@ MVK_PUBLIC_SYMBOL MTLVertexStepFunction mvkMTLVertexStepFunctionFromVkVertexInpu
 	}
 }
 
+MVK_PUBLIC_SYMBOL MTLStepFunction mvkMTLStepFunctionFromVkVertexInputRate(VkVertexInputRate vkVtxStep, bool forTess) {
+	if (!forTess) {
+		return (MTLStepFunction)mvkMTLVertexStepFunctionFromVkVertexInputRate(vkVtxStep);
+	}
+	switch (vkVtxStep) {
+		case VK_VERTEX_INPUT_RATE_VERTEX:		return MTLStepFunctionThreadPositionInGridX;
+		case VK_VERTEX_INPUT_RATE_INSTANCE:		return MTLStepFunctionThreadPositionInGridY;
+		default:								return MTLStepFunctionThreadPositionInGridX;
+	}
+}
+
 #undef mvkMTLPrimitiveTypeFromVkPrimitiveTopology
 MVK_PUBLIC_SYMBOL MTLPrimitiveType mvkMTLPrimitiveTypeFromVkPrimitiveTopology(VkPrimitiveTopology vkTopology) {
 	return mvkMTLPrimitiveTypeFromVkPrimitiveTopologyInObj(vkTopology, nullptr);
@@ -452,9 +463,10 @@ MVK_PUBLIC_SYMBOL MTLTriangleFillMode mvkMTLTriangleFillModeFromVkPolygonMode(Vk
 MTLTriangleFillMode mvkMTLTriangleFillModeFromVkPolygonModeInObj(VkPolygonMode vkFillMode, MVKBaseObject* mvkObj) {
 	switch (vkFillMode) {
 		case VK_POLYGON_MODE_FILL:
-		case VK_POLYGON_MODE_POINT:
 			return MTLTriangleFillModeFill;
 
+		case VK_POLYGON_MODE_POINT:
+			MVKBaseObject::reportError(mvkObj, VK_ERROR_FORMAT_NOT_SUPPORTED, "VkPolygonMode value VK_POLYGON_MODE_POINT is not supported for render pipelines.");
 		case VK_POLYGON_MODE_LINE:
 			return MTLTriangleFillModeLines;
 
@@ -496,6 +508,40 @@ MTLStoreAction mvkMTLStoreActionFromVkAttachmentStoreOpInObj(VkAttachmentStoreOp
 			return MTLStoreActionStore;
 	}
 }
+
+#undef mvkMTLMultisampleDepthResolveFilterFromVkResolveModeFlagBits
+MVK_PUBLIC_SYMBOL MTLMultisampleDepthResolveFilter mvkMTLMultisampleDepthResolveFilterFromVkResolveModeFlagBits(VkResolveModeFlagBits vkResolveMode) {
+	return mvkMTLMultisampleDepthResolveFilterFromVkResolveModeFlagBitsInObj(vkResolveMode, nullptr);
+}
+
+MTLMultisampleDepthResolveFilter mvkMTLMultisampleDepthResolveFilterFromVkResolveModeFlagBitsInObj(VkResolveModeFlagBits vkResolveMode, MVKBaseObject* mvkObj) {
+	switch (vkResolveMode) {
+		case VK_RESOLVE_MODE_SAMPLE_ZERO_BIT:	return MTLMultisampleDepthResolveFilterSample0;
+		case VK_RESOLVE_MODE_MIN_BIT:			return MTLMultisampleDepthResolveFilterMin;
+		case VK_RESOLVE_MODE_MAX_BIT:			return MTLMultisampleDepthResolveFilterMax;
+
+		default:
+			MVKBaseObject::reportError(mvkObj, VK_ERROR_FORMAT_NOT_SUPPORTED, "VkResolveModeFlagBits value %d is not supported.", vkResolveMode);
+			return MTLMultisampleDepthResolveFilterSample0;
+	}
+}
+
+#if MVK_MACOS_OR_IOS
+#undef mvkMTLMultisampleStencilResolveFilterFromVkResolveModeFlagBits
+MVK_PUBLIC_SYMBOL MTLMultisampleStencilResolveFilter mvkMTLMultisampleStencilResolveFilterFromVkResolveModeFlagBits(VkResolveModeFlagBits vkResolveMode) {
+	return mvkMTLMultisampleStencilResolveFilterFromVkResolveModeFlagBitsInObj(vkResolveMode, nullptr);
+}
+
+MTLMultisampleStencilResolveFilter mvkMTLMultisampleStencilResolveFilterFromVkResolveModeFlagBitsInObj(VkResolveModeFlagBits vkResolveMode, MVKBaseObject* mvkObj) {
+	switch (vkResolveMode) {
+		case VK_RESOLVE_MODE_SAMPLE_ZERO_BIT:	return MTLMultisampleStencilResolveFilterSample0;
+
+		default:
+			MVKBaseObject::reportError(mvkObj, VK_ERROR_FORMAT_NOT_SUPPORTED, "VkResolveModeFlagBits value %d is not supported.", vkResolveMode);
+			return MTLMultisampleStencilResolveFilterSample0;
+	}
+}
+#endif
 
 MVK_PUBLIC_SYMBOL MTLViewport mvkMTLViewportFromVkViewport(VkViewport vkViewport) {
 	MTLViewport mtlViewport;
@@ -688,10 +734,9 @@ MVK_PUBLIC_SYMBOL MTLBarrierScope mvkMTLBarrierScopeFromVkAccessFlags(VkAccessFl
 
 MVK_PUBLIC_SYMBOL MTLStorageMode mvkMTLStorageModeFromVkMemoryPropertyFlags(VkMemoryPropertyFlags vkFlags) {
 
-	// If not visible to the host: Private
+	// If not visible to the host, use Private, or Memoryless if available and lazily allocated.
 	if ( !mvkAreAllFlagsEnabled(vkFlags, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ) {
-#if MVK_IOS
-		// iOS: If lazily allocated, Memoryless
+#if MVK_APPLE_SILICON
 		if (mvkAreAllFlagsEnabled(vkFlags, VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)) {
 			return MTLStorageModeMemoryless;
 		}
@@ -720,18 +765,3 @@ MVK_PUBLIC_SYMBOL MTLResourceOptions mvkMTLResourceOptions(MTLStorageMode mtlSto
 														   MTLCPUCacheMode mtlCPUCacheMode) {
 	return (mtlStorageMode << MTLResourceStorageModeShift) | (mtlCPUCacheMode << MTLResourceCPUCacheModeShift);
 }
-
-static bool _mvkTexture1DAs2D = MVK_CONFIG_TEXTURE_1D_AS_2D;
-static bool _mvkTexture1DAs2DInitialized = false;
-
-// Returns environment variable indicating whether to use Metal 2D textures for 1D textures.
-// We do this once lazily instead of in a library constructor function to
-// ensure the NSProcessInfo environment is available when called upon.
-bool mvkTreatTexture1DAs2D() {
-	if ( !_mvkTexture1DAs2DInitialized ) {
-		_mvkTexture1DAs2DInitialized = true;
-		MVK_SET_FROM_ENV_OR_BUILD_INT32(_mvkTexture1DAs2D, MVK_CONFIG_TEXTURE_1D_AS_2D);
-	}
-	return _mvkTexture1DAs2D;
-}
-

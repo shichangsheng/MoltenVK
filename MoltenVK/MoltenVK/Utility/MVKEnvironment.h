@@ -1,7 +1,7 @@
 /*
  * MVKEnvironment.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,8 @@
 #pragma once
 
 #include "MVKCommonEnvironment.h"
-#include "mvk_vulkan.h"
+#include "MVKLogging.h"
+#include "vk_mvk_moltenvk.h"
 
 
 // Expose MoltenVK Apple surface extension functionality
@@ -35,8 +36,8 @@
 #endif
 
 /** Macro to determine the Vulkan version supported by MoltenVK. */
-#define MVK_VULKAN_API_VERSION		VK_MAKE_VERSION(VK_VERSION_MAJOR(VK_API_VERSION_1_0),	\
-													VK_VERSION_MINOR(VK_API_VERSION_1_0),	\
+#define MVK_VULKAN_API_VERSION		VK_MAKE_VERSION(VK_VERSION_MAJOR(VK_API_VERSION_1_1),	\
+													VK_VERSION_MINOR(VK_API_VERSION_1_1),	\
 													VK_HEADER_VERSION)
 
 /** 
@@ -50,6 +51,35 @@
 #define MVK_VULKAN_API_VERSION_CONFORM(api_ver)		VK_MAKE_VERSION(VK_VERSION_MAJOR(api_ver),	\
                                                                     VK_VERSION_MINOR(api_ver),	\
                                                                     0)
+
+/**
+ * IOSurfaces are supported on macOS, and on iOS starting with iOS 11.
+ *
+ * To enable IOSurface support on iOS in MoltenVK, set the iOS Deployment Target
+ * (IPHONEOS_DEPLOYMENT_TARGET) build setting to 11.0 or greater when building
+ * MoltenVK, and any app that uses IOSurfaces.
+ */
+#if MVK_MACOS
+#	define MVK_SUPPORT_IOSURFACE_BOOL    1
+#endif
+
+#if MVK_IOS
+#	define MVK_SUPPORT_IOSURFACE_BOOL	(__IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_11_0)
+#endif
+
+#if MVK_TVOS
+# define MVK_SUPPORT_IOSURFACE_BOOL (__TV_OS_VERSION_MIN_REQUIRED >= __TVOS_11_0)
+#endif
+
+
+#pragma mark -
+#pragma mark Global Configuration
+
+/** Global function to access MoltenVK configuration info. */
+const MVKConfiguration* mvkGetMVKConfiguration();
+
+/** Global function to update MoltenVK configuration info. */
+void mvkSetMVKConfiguration(MVKConfiguration* pMVKConfig);
 
 /** Flip the vertex coordinate in shaders. Enabled by default. */
 #ifndef MVK_CONFIG_SHADER_CONVERSION_FLIP_VERTEX_Y
@@ -66,13 +96,13 @@
  * MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS env var, or the config directly.
  */
 #if MVK_MACOS
-#   define MVK_MTLEVENT_MIN_OS  10.14
+#   define MVK_CONFIG_MTLEVENT_MIN_OS  10.14
 #endif
-#if MVK_IOS
-#   define MVK_MTLEVENT_MIN_OS  12.0
+#if MVK_IOS_OR_TVOS
+#   define MVK_CONFIG_MTLEVENT_MIN_OS  12.0
 #endif
 #ifndef MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS
-#   define MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS    mvkOSVersionIsAtLeast(MVK_MTLEVENT_MIN_OS)
+#   define MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS    mvkOSVersionIsAtLeast(MVK_CONFIG_MTLEVENT_MIN_OS)
 #endif
 
 /** Fill a Metal command buffers when each Vulkan command buffer is filled. */
@@ -118,6 +148,11 @@
 #   define MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT    0
 #endif
 
+/** Log activity performance every time an activity occurs. Disabled by default. */
+#	ifndef MVK_CONFIG_PERFORMANCE_LOGGING_INLINE
+#   	define MVK_CONFIG_PERFORMANCE_LOGGING_INLINE    0
+#	endif
+
 /** Display the MoltenVK logo watermark. Disabled by default. */
 #ifndef MVK_CONFIG_DISPLAY_WATERMARK
 #   define MVK_CONFIG_DISPLAY_WATERMARK    0
@@ -136,6 +171,21 @@
 /** Support full ImageView swizzles. Disabled by default. */
 #ifndef MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE
 #   define MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE    0
+#endif
+
+/** Set the fastMathEnabled Metal Compiler option. Enabled by default. */
+#ifndef MVK_CONFIG_FAST_MATH_ENABLED
+#   define MVK_CONFIG_FAST_MATH_ENABLED 1
+#endif
+
+/** Set the logging level: */
+#ifndef MVK_CONFIG_LOG_LEVEL
+#   define MVK_CONFIG_LOG_LEVEL    MVK_CONFIG_LOG_LEVEL_INFO
+#endif
+
+/** Set the Vulkan call logging level. */
+#ifndef MVK_CONFIG_TRACE_VULKAN_CALLS
+#   define MVK_CONFIG_TRACE_VULKAN_CALLS    MVK_CONFIG_TRACE_VULKAN_CALLS_NONE
 #endif
 
 /**
@@ -160,10 +210,19 @@
  * developer having to trigger it manually via the Xcode UI. This is useful when trying
  * to capture a one-shot trace, such as when running a Vulkan CTS test case.
  */
-#define MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE_NONE		0
-#define MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE_DEVICE	1
 #ifndef MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE
 #   define MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE    	MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE_NONE
+#endif
+
+/**
+ * The file to capture automatic GPU traces to, instead of capturing to Xcode. This is
+ * useful when trying to capture a one-shot trace, but the program cannot be run under
+ * Xcode's control. Tilde paths may be used to place the trace document in a user's home
+ * directory. This functionality requires macOS 10.15 or iOS 13. If left blank, automatic
+ * traces will be captured to Xcode.
+ */
+#ifndef MVK_CONFIG_AUTO_GPU_CAPTURE_OUTPUT_FILE
+#	define MVK_CONFIG_AUTO_GPU_CAPTURE_OUTPUT_FILE	""
 #endif
 
 /** Force the use of a low-power GPU if it exists. Disabled by default. */
@@ -175,13 +234,13 @@
  * Allow the use of MTLFence or MTLEvent for VkSemaphore synchronization behaviour.
  * By default:
  *   - MVK_ALLOW_METAL_FENCES is enabled
- *   - MVK_ALLOW_METAL_EVENTS is disabled
+ *   - MVK_ALLOW_METAL_EVENTS is enabled
  * */
 #ifndef MVK_ALLOW_METAL_FENCES
 #   define MVK_ALLOW_METAL_FENCES    1
 #endif
 #ifndef MVK_ALLOW_METAL_EVENTS
-#   define MVK_ALLOW_METAL_EVENTS    0
+#   define MVK_ALLOW_METAL_EVENTS    1
 #endif
 
 /** Substitute Metal 2D textures for Vulkan 1D images. Enabled by default. */
@@ -189,17 +248,27 @@
 #   define MVK_CONFIG_TEXTURE_1D_AS_2D    1
 #endif
 
-/**
- * IOSurfaces are supported on macOS, and on iOS starting with iOS 11.
- *
- * To enable IOSurface support on iOS in MoltenVK, set the iOS Deployment Target
- * (IPHONEOS_DEPLOYMENT_TARGET) build setting to 11.0 or greater when building
- * MoltenVK, and any app that uses IOSurfaces.
- */
-#if MVK_MACOS
-#	define MVK_SUPPORT_IOSURFACE_BOOL    1
+/** Preallocate descriptors when creating VkDescriptorPool. Enabled by default. */
+#ifndef MVK_CONFIG_PREALLOCATE_DESCRIPTORS
+#   define MVK_CONFIG_PREALLOCATE_DESCRIPTORS    1
 #endif
 
-#if MVK_IOS
-#	define MVK_SUPPORT_IOSURFACE_BOOL	(__IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_11_0)
+/** Use pooling for command resources in a VkCommandPool. Enabled by default. */
+#ifndef MVK_CONFIG_USE_COMMAND_POOLING
+#  	define MVK_CONFIG_USE_COMMAND_POOLING    1
+#endif
+
+/** Use MTLHeaps where possible when allocating MTLBuffers and MTLTextures. Disabled by default. */
+#ifndef MVK_CONFIG_USE_MTLHEAP
+#  	define MVK_CONFIG_USE_MTLHEAP    0
+#endif
+
+/** The Vulkan API version to advertise. Defaults to MVK_VULKAN_API_VERSION. */
+#ifndef MVK_CONFIG_API_VERSION_TO_ADVERTISE
+#  	define MVK_CONFIG_API_VERSION_TO_ADVERTISE    MVK_VULKAN_API_VERSION
+#endif
+
+/** Advertise supported extensions. Defaults to all. */
+#ifndef MVK_CONFIG_ADVERTISE_EXTENSIONS
+#  	define MVK_CONFIG_ADVERTISE_EXTENSIONS    MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL
 #endif

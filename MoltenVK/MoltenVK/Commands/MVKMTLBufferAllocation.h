@@ -1,7 +1,7 @@
 /*
  * MVKMTLBufferAllocation.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include "MVKFoundation.h"
 #include "MVKObjectPool.h"
 #include "MVKDevice.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 
 class MVKMTLBufferAllocationPool;
 
@@ -86,7 +86,7 @@ public:
     MVKMTLBufferAllocation* newObject() override;
 
     /** Configures this instance to dispense MVKMTLBufferAllocation instances of the specified size. */
-    MVKMTLBufferAllocationPool(MVKDevice* device, NSUInteger allocationLength);
+    MVKMTLBufferAllocationPool(MVKDevice* device, NSUInteger allocationLength, MTLStorageMode mtlStorageMode, bool isDedicated);
 
     ~MVKMTLBufferAllocationPool() override;
 
@@ -97,7 +97,8 @@ protected:
     NSUInteger _nextOffset;
     NSUInteger _allocationLength;
     NSUInteger _mtlBufferLength;
-	MVKVectorInline<id<MTLBuffer>, 64> _mtlBuffers;
+    MTLStorageMode _mtlStorageMode;
+	MVKSmallVector<id<MTLBuffer>, 64> _mtlBuffers;
     MVKDevice* _device;
 };
 
@@ -137,12 +138,12 @@ public:
      * next power-of-two value that is at least as big as the specified maximum size.
 	 * If makeThreadSafe is true, a lock will be applied when an allocation is acquired.
      */
-    MVKMTLBufferAllocator(MVKDevice* device, NSUInteger maxRegionLength, bool makeThreadSafe = false);
+    MVKMTLBufferAllocator(MVKDevice* device, NSUInteger maxRegionLength, bool makeThreadSafe = false, bool isDedicated = false, MTLStorageMode mtlStorageMode = MTLStorageModeShared);
 
     ~MVKMTLBufferAllocator() override;
 
 protected:
-	MVKVectorInline<MVKMTLBufferAllocationPool*, 32> _regionPools;
+	MVKSmallVector<MVKMTLBufferAllocationPool*, 32> _regionPools;
     NSUInteger _maxAllocationLength;
 	bool _makeThreadSafe;
 

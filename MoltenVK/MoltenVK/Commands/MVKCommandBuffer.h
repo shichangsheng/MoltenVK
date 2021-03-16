@@ -1,7 +1,7 @@
 /*
  * MVKCommandBuffer.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,10 @@
 #include "MVKCommand.h"
 #include "MVKCommandEncoderState.h"
 #include "MVKMTLBufferAllocation.h"
+#include "MVKRenderPass.h"
 #include "MVKCmdPipeline.h"
 #include "MVKQueryPool.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 #include <unordered_map>
 
 class MVKCommandPool;
@@ -32,6 +33,8 @@ class MVKQueue;
 class MVKQueueCommandBufferSubmission;
 class MVKCommandEncoder;
 class MVKCommandEncodingPool;
+class MVKCmdBeginRenderPassBase;
+class MVKCmdNextSubpass;
 class MVKRenderPass;
 class MVKFramebuffer;
 class MVKRenderSubpass;
@@ -39,9 +42,6 @@ class MVKQueryPool;
 class MVKPipeline;
 class MVKGraphicsPipeline;
 class MVKComputePipeline;
-class MVKCmdBeginRenderPass;
-class MVKCmdEndRenderPass;
-class MVKLoadStoreOverrideMixin;
 
 typedef uint64_t MVKMTLCommandBufferID;
 
@@ -79,46 +79,51 @@ public:
 	/** Returns the number of commands currently in this command buffer. */
 	inline uint32_t getCommandCount() { return _commandCount; }
 
+	/** Returns the command pool backing this command buffer. */
+	inline MVKCommandPool* getCommandPool() { return _commandPool; }
+
 	/** Submit the commands in this buffer as part of the queue submission. */
 	void submit(MVKQueueCommandBufferSubmission* cmdBuffSubmit);
 
     /** Returns whether this command buffer can be submitted to a queue more than once. */
     inline bool getIsReusable() { return _isReusable; }
 
-	/** The command pool that is the source of commands for this buffer. */
-	MVKCommandPool* _commandPool;
-
     /**
      * Metal requires that a visibility buffer is established when a render pass is created, 
      * but Vulkan permits it to be set during a render pass. When the first occlusion query
      * command is added, it sets this value so that it can be applied when the first renderpass
-     * is begun. The execution of subsequent occlusion query commmands may change the visibility
-     * buffer during command execution, and begin a new Metal renderpass.
+     * is begun.
      */
-    id<MTLBuffer> _initialVisibilityResultMTLBuffer;
+    bool _needsVisibilityResultMTLBuffer;
 
+	/** Called when a MVKCmdExecuteCommands is added to this command buffer. */
+	void recordExecuteCommands(const MVKArrayRef<MVKCommandBuffer*> secondaryCommandBuffers);
 
-#pragma mark Constituent render pass management
-    /** Preps metadata for recording render pass */
-	void recordBeginRenderPass(MVKCmdBeginRenderPass* mvkBeginRenderPass);
-	
-	/** Finishes metadata for recording render pass */
-	void recordEndRenderPass(MVKCmdEndRenderPass* mvkEndRenderPass);
-	
-	/** Update the last recorded pipeline if it will end and start a new Metal render pass (ie, in tessellation) */
+#pragma mark Tessellation constituent command management
+
+	/** Update the last recorded pipeline with tessellation shaders */
 	void recordBindPipeline(MVKCmdBindPipeline* mvkBindPipeline);
-	
-	/** Update the last recorded drawcall to determine load/store actions */
-	void recordDraw(MVKLoadStoreOverrideMixin* mvkDraw);
-	
-	/** The most recent recorded begin renderpass */
-	MVKCmdBeginRenderPass* _lastBeginRenderPass;
-	
-	/** The most recent recorded multi-pass (ie, tessellation) pipeline */
+
+	/** The most recent recorded tessellation pipeline */
 	MVKCmdBindPipeline* _lastTessellationPipeline;
-	
-	/** The most recent recorded multi-pass (ie, tessellation) draw */
-	MVKLoadStoreOverrideMixin* _lastTessellationDraw;
+
+
+#pragma mark Multiview render pass command management
+
+	/** Update the last recorded multiview render pass */
+	void recordBeginRenderPass(MVKCmdBeginRenderPassBase* mvkBeginRenderPass);
+
+	/** Update the last recorded multiview subpass */
+	void recordNextSubpass();
+
+	/** Forget the last recorded multiview render pass */
+	void recordEndRenderPass();
+
+	/** The most recent recorded multiview render subpass */
+	MVKRenderSubpass* _lastMultiviewSubpass;
+
+	/** Returns the currently active multiview render subpass, even for secondary command buffers */
+	MVKRenderSubpass* getLastMultiviewSubpass();
 
 
 #pragma mark Construction
@@ -146,7 +151,7 @@ protected:
 	friend class MVKCommandPool;
 
 	MVKBaseObject* getBaseObject() override { return this; };
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 	void init(const VkCommandBufferAllocateInfo* pAllocateInfo);
 	bool canExecute();
 	bool canPrefill();
@@ -157,6 +162,7 @@ protected:
 	MVKCommand* _head = nullptr;
 	MVKCommand* _tail = nullptr;
 	uint32_t _commandCount;
+	MVKCommandPool* _commandPool;
 	std::atomic_flag _isExecutingNonConcurrently;
 	VkCommandBufferInheritanceInfo _secondaryInheritanceInfo;
 	id<MTLCommandBuffer> _prefilledMTLCmdBuffer = nil;
@@ -241,7 +247,7 @@ protected:
 
 
 /*** Holds a collection of active queries for each query pool. */
-typedef std::unordered_map<MVKQueryPool*, MVKVectorInline<uint32_t, kMVKDefaultQueryCount>> MVKActivatedQueries;
+typedef std::unordered_map<MVKQueryPool*, MVKSmallVector<uint32_t, kMVKDefaultQueryCount>> MVKActivatedQueries;
 
 /** 
  * MVKCommandEncoder uses a visitor design pattern iterate the commands in a MVKCommandBuffer, 
@@ -264,22 +270,33 @@ public:
 	void encodeSecondary(MVKCommandBuffer* secondaryCmdBuffer);
 
 	/** Begins a render pass and establishes initial draw state. */
-	void beginRenderpass(VkSubpassContents subpassContents,
+	void beginRenderpass(MVKCommand* passCmd,
+						 VkSubpassContents subpassContents,
 						 MVKRenderPass* renderPass,
 						 MVKFramebuffer* framebuffer,
 						 VkRect2D& renderArea,
-						 MVKVector<VkClearValue>* clearValues,
-						 bool loadOverride = false,
-						 bool storeOverride = false);
+						 MVKArrayRef<VkClearValue> clearValues);
 
 	/** Begins the next render subpass. */
-	void beginNextSubpass(VkSubpassContents renderpassContents);
+	void beginNextSubpass(MVKCommand* subpassCmd, VkSubpassContents renderpassContents);
+
+	/** Begins the next multiview Metal render pass. */
+	void beginNextMultiviewPass();
 
 	/** Begins a Metal render pass for the current render subpass. */
-	void beginMetalRenderPass(bool loadOverride = false, bool storeOverride = false);
+	void beginMetalRenderPass(bool loadOverride = false);
+
+	/** If a render encoder is active, encodes store actions for all attachments to it. */
+	void encodeStoreActions(bool storeOverride = false);
+
+	/** Returns whether or not we are presently in a render pass. */
+	bool isInRenderPass() { return _renderPass != nullptr; }
 
 	/** Returns the render subpass that is currently active. */
 	MVKRenderSubpass* getSubpass();
+
+	/** Returns the index of the currently active multiview subpass, or zero if the current render pass is not multiview. */
+	uint32_t getMultiviewPassIndex();
 
     /** Binds a pipeline to a bind point. */
     void bindPipeline(VkPipelineBindPoint pipelineBindPoint, MVKPipeline* pipeline);
@@ -294,7 +311,7 @@ public:
     bool supportsDynamicState(VkDynamicState state);
 
 	/** Clips the scissor to ensure it fits inside the render area.  */
-	MTLScissorRect clipToRenderArea(MTLScissorRect mtlScissor);
+	VkRect2D clipToRenderArea(VkRect2D scissor);
 
 	/** Called by each graphics draw command to establish any outstanding state just prior to performing the draw. */
 	void finalizeDrawState(MVKGraphicsStage stage);
@@ -317,7 +334,7 @@ public:
 	void endMetalRenderEncoding();
 
 	/** 
-	 * Returns trhe current Metal compute encoder for the specified use,
+	 * Returns the current Metal compute encoder for the specified use,
 	 * which determines the label assigned to the returned encoder.
 	 *
 	 * If the current encoder is not a compute encoder, this function ends current before 
@@ -336,7 +353,7 @@ public:
 
 	/**
 	 * Returns the current Metal encoder, which may be any of the Metal render,
-	 * comupte, or Blit encoders, or nil if no encoding is currently occurring.
+	 * compute, or Blit encoders, or nil if no encoding is currently occurring.
 	 */
 	id<MTLCommandEncoder> getMTLEncoder();
 
@@ -353,21 +370,24 @@ public:
     void setComputeBytes(id<MTLComputeCommandEncoder> mtlEncoder, const void* bytes, NSUInteger length, uint32_t mtlBuffIndex);
 
     /** Get a temporary MTLBuffer that will be returned to a pool after the command buffer is finished. */
-    const MVKMTLBufferAllocation* getTempMTLBuffer(NSUInteger length);
+    const MVKMTLBufferAllocation* getTempMTLBuffer(NSUInteger length, bool isPrivate = false, bool isDedicated = false);
 
     /** Returns the command encoding pool. */
     MVKCommandEncodingPool* getCommandEncodingPool();
 
 #pragma mark Queries
 
-    /** Begins an occulusion query. */
+    /** Begins an occlusion query. */
     void beginOcclusionQuery(MVKOcclusionQueryPool* pQueryPool, uint32_t query, VkQueryControlFlags flags);
 
-    /** Ends the current occulusion query. */
+    /** Ends the current occlusion query. */
     void endOcclusionQuery(MVKOcclusionQueryPool* pQueryPool, uint32_t query);
 
     /** Marks a timestamp for the specified query. */
     void markTimestamp(MVKQueryPool* pQueryPool, uint32_t query);
+
+    /** Reset a range of queries. */
+    void resetQueries(MVKQueryPool* pQueryPool, uint32_t firstQuery, uint32_t queryCount);
 
 #pragma mark Dynamic encoding state accessed directly
 
@@ -394,6 +414,9 @@ public:
 
 	/** The current Metal render encoder. */
 	id<MTLRenderCommandEncoder> _mtlRenderEncoder;
+
+	/** The buffer used to hold occlusion query results in a render pass. */
+	const MVKMTLBufferAllocation* _visibilityResultMTLBuffer;
 
     /** Tracks the current graphics pipeline bound to the encoder. */
     MVKPipelineCommandEncoderState _graphicsPipelineState;
@@ -431,8 +454,11 @@ public:
     /** The size of the threadgroup for the compute shader. */
     MTLSize _mtlThreadgroupSize;
 
-	/** Indicates whether the current render subpass is rendering to an array (layered) framebuffer. */
-	bool _isUsingLayeredRendering;
+	/** Indicates whether the current render subpass is able to render to an array (layered) framebuffer. */
+	bool _canUseLayeredRendering;
+
+	/** Indicates whether the current draw is an indexed draw. */
+	bool _isIndexedDraw;
 
 
 #pragma mark Construction
@@ -440,19 +466,21 @@ public:
 	MVKCommandEncoder(MVKCommandBuffer* cmdBuffer);
 
 protected:
-    void addActivatedQuery(MVKQueryPool* pQueryPool, uint32_t query);
+    void addActivatedQueries(MVKQueryPool* pQueryPool, uint32_t query, uint32_t queryCount);
     void finishQueries();
-	void setSubpass(VkSubpassContents subpassContents, uint32_t subpassIndex, bool loadOverride = false, bool storeOverride = false);
+	void setSubpass(MVKCommand* passCmd, VkSubpassContents subpassContents, uint32_t subpassIndex);
 	void clearRenderArea();
     const MVKMTLBufferAllocation* copyToTempMTLBufferAllocation(const void* bytes, NSUInteger length);
     NSString* getMTLRenderCommandEncoderName();
 
 	VkSubpassContents _subpassContents;
 	MVKRenderPass* _renderPass;
+	MVKCommand* _lastMultiviewPassCmd;
 	uint32_t _renderSubpassIndex;
+	uint32_t _multiviewPassIndex;
 	VkRect2D _renderArea;
     MVKActivatedQueries* _pActivatedQueries;
-	MVKVectorInline<VkClearValue, 8> _clearValues;
+	MVKSmallVector<VkClearValue, kMVKDefaultAttachmentCount> _clearValues;
 	id<MTLComputeCommandEncoder> _mtlComputeEncoder;
 	MVKCommandUse _mtlComputeEncoderUse;
 	id<MTLBlitCommandEncoder> _mtlBlitEncoder;

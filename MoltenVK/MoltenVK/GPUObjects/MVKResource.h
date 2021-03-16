@@ -1,7 +1,7 @@
 /*
  * MVKResource.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 
 #include "MVKDevice.h"
 #include "MVKDeviceMemory.h"
+#include "MVKMTLResourceBindings.h"
 
 class MVKCommandEncoder;
 
@@ -38,17 +39,8 @@ public:
     /** Returns the byte offset in the bound device memory. */
     inline VkDeviceSize getDeviceMemoryOffset() { return _deviceMemoryOffset; }
 
-	/** Returns the memory requirements of this resource by populating the specified structure. */
-	virtual VkResult getMemoryRequirements(VkMemoryRequirements* pMemoryRequirements) = 0;
-
-	/** Returns the memory requirements of this resource by populating the specified structure. */
-	virtual VkResult getMemoryRequirements(const void* pInfo, VkMemoryRequirements2* pMemoryRequirements) = 0;
-
 	/** Binds this resource to the specified offset within the specified memory allocation. */
 	virtual VkResult bindDeviceMemory(MVKDeviceMemory* mvkMem, VkDeviceSize memOffset);
-
-	/** Binds this resource according to the specified bind information. */
-	virtual VkResult bindDeviceMemory2(const void* pBindInfo);
 
 	/** Returns the device memory underlying this resource. */
 	inline MVKDeviceMemory* getDeviceMemory() { return _deviceMemory; }
@@ -70,9 +62,9 @@ public:
 	/** Applies the specified global memory barrier. */
 	virtual void applyMemoryBarrier(VkPipelineStageFlags srcStageMask,
 									VkPipelineStageFlags dstStageMask,
-									VkMemoryBarrier* pMemoryBarrier,
-                                    MVKCommandEncoder* cmdEncoder,
-                                    MVKCommandUse cmdUse) = 0;
+									MVKPipelineBarrier& barrier,
+									MVKCommandEncoder* cmdEncoder,
+									MVKCommandUse cmdUse) = 0;
 
 	
 #pragma mark Construction
@@ -80,12 +72,10 @@ public:
     MVKResource(MVKDevice* device) : MVKVulkanAPIDeviceObject(device) {}
 
 protected:
-	virtual bool needsHostReadSync(VkPipelineStageFlags srcStageMask,
-								   VkPipelineStageFlags dstStageMask,
-								   VkMemoryBarrier* pMemoryBarrier);
-
 	MVKDeviceMemory* _deviceMemory = nullptr;
 	VkDeviceSize _deviceMemoryOffset = 0;
     VkDeviceSize _byteCount = 0;
     VkDeviceSize _byteAlignment = 0;
+	VkExternalMemoryHandleTypeFlags _externalMemoryHandleTypes = 0;
+	bool _requiresDedicatedMemoryAllocation = false;
 };

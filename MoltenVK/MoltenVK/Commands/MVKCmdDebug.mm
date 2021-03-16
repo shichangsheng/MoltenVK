@@ -1,7 +1,7 @@
 /*
  * MVKCmdDebug.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,17 @@
 #include "MVKCommandBuffer.h"
 #include "MVKCommandPool.h"
 
-#include "MVKLogging.h"
-
 #pragma mark -
 #pragma mark MVKCmdDebugMarker
 
-void MVKCmdDebugMarker::setContent(const char* pMarkerName, const float color[4]) {
+VkResult MVKCmdDebugMarker::setContent(MVKCommandBuffer* cmdBuff,
+									   const char* pMarkerName,
+									   const float color[4]) {
 	[_markerName release];
 	_markerName = [[NSString alloc] initWithUTF8String: pMarkerName];	// retained
-}
 
-MVKCmdDebugMarker::MVKCmdDebugMarker(MVKCommandTypePool<MVKCmdDebugMarker>* pool)
-	: MVKCommand::MVKCommand((MVKCommandTypePool<MVKCommand>*)pool) {}
+	return VK_SUCCESS;
+}
 
 MVKCmdDebugMarker::~MVKCmdDebugMarker() {
 	[_markerName release];
@@ -51,12 +50,11 @@ void MVKCmdDebugMarkerBegin::encode(MVKCommandEncoder* cmdEncoder) {
 	}
 }
 
-MVKCmdDebugMarkerBegin::MVKCmdDebugMarkerBegin(MVKCommandTypePool<MVKCmdDebugMarkerBegin>* pool)
-	: MVKCmdDebugMarker::MVKCmdDebugMarker((MVKCommandTypePool<MVKCmdDebugMarker>*)pool) {}
-
 
 #pragma mark -
 #pragma mark MVKCmdDebugMarkerEnd
+
+VkResult MVKCmdDebugMarkerEnd::setContent(MVKCommandBuffer* cmdBuff) { return VK_SUCCESS; }
 
 // Vulkan debug groups are more general than Metal's.
 // If a renderpass is active, pop from the render command encoder, otherwise pop from the command buffer.
@@ -69,56 +67,12 @@ void MVKCmdDebugMarkerEnd::encode(MVKCommandEncoder* cmdEncoder) {
 	}
 }
 
-MVKCmdDebugMarkerEnd::MVKCmdDebugMarkerEnd(MVKCommandTypePool<MVKCmdDebugMarkerEnd>* pool)
-	: MVKCommand::MVKCommand((MVKCommandTypePool<MVKCommand>*)pool) {}
-
 
 #pragma mark -
 #pragma mark MVKCmdDebugMarkerInsert
 
 void MVKCmdDebugMarkerInsert::encode(MVKCommandEncoder* cmdEncoder) {
 	[cmdEncoder->getMTLEncoder() insertDebugSignpost: _markerName];
-}
-
-MVKCmdDebugMarkerInsert::MVKCmdDebugMarkerInsert(MVKCommandTypePool<MVKCmdDebugMarkerInsert>* pool)
-	: MVKCmdDebugMarker::MVKCmdDebugMarker((MVKCommandTypePool<MVKCmdDebugMarker>*)pool) {}
-
-
-#pragma mark -
-#pragma mark Command creation functions
-
-void mvkCmdDebugMarkerBegin(MVKCommandBuffer* cmdBuff, const VkDebugMarkerMarkerInfoEXT* pMarkerInfo) {
-	MVKCmdDebugMarkerBegin* cmd = cmdBuff->_commandPool->_cmdDebugMarkerBeginPool.acquireObject();
-	cmd->setContent(pMarkerInfo->pMarkerName, pMarkerInfo->color);
-	cmdBuff->addCommand(cmd);
-}
-
-void mvkCmdDebugMarkerEnd(MVKCommandBuffer* cmdBuff) {
-	MVKCmdDebugMarkerEnd* cmd = cmdBuff->_commandPool->_cmdDebugMarkerEndPool.acquireObject();
-	cmdBuff->addCommand(cmd);
-}
-
-void mvkCmdDebugMarkerInsert(MVKCommandBuffer* cmdBuff, const VkDebugMarkerMarkerInfoEXT* pMarkerInfo) {
-	MVKCmdDebugMarkerInsert* cmd = cmdBuff->_commandPool->_cmdDebugMarkerInsertPool.acquireObject();
-	cmd->setContent(pMarkerInfo->pMarkerName, pMarkerInfo->color);
-	cmdBuff->addCommand(cmd);
-}
-
-void mvkCmdBeginDebugUtilsLabel(MVKCommandBuffer* cmdBuff, const VkDebugUtilsLabelEXT* pLabelInfo) {
-	MVKCmdDebugMarkerBegin* cmd = cmdBuff->_commandPool->_cmdDebugMarkerBeginPool.acquireObject();
-	cmd->setContent(pLabelInfo->pLabelName, pLabelInfo->color);
-	cmdBuff->addCommand(cmd);
-}
-
-void mvkCmdEndDebugUtilsLabel(MVKCommandBuffer* cmdBuff) {
-	MVKCmdDebugMarkerEnd* cmd = cmdBuff->_commandPool->_cmdDebugMarkerEndPool.acquireObject();
-	cmdBuff->addCommand(cmd);
-}
-
-void mvkCmdInsertDebugUtilsLabel(MVKCommandBuffer* cmdBuff, const VkDebugUtilsLabelEXT* pLabelInfo) {
-	MVKCmdDebugMarkerInsert* cmd = cmdBuff->_commandPool->_cmdDebugMarkerInsertPool.acquireObject();
-	cmd->setContent(pLabelInfo->pLabelName, pLabelInfo->color);
-	cmdBuff->addCommand(cmd);
 }
 
 

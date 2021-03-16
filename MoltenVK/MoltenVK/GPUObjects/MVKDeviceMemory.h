@@ -1,7 +1,7 @@
 /*
  * MVKDeviceMemory.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,16 +19,25 @@
 #pragma once
 
 #include "MVKDevice.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 #include <mutex>
 
 #import <Metal/Metal.h>
 
-class MVKBuffer;
-class MVKImage;
+class MVKImageMemoryBinding;
+
+// TODO: These are inoperable placeholders until VK_KHR_external_memory_metal defines them properly
+static const VkExternalMemoryHandleTypeFlagBits VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLBUFFER_BIT_KHR = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM;
+static const VkExternalMemoryHandleTypeFlagBits VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLTEXTURE_BIT_KHR = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FLAG_BITS_MAX_ENUM;
 
 
 #pragma mark MVKDeviceMemory
+
+typedef struct {
+	VkDeviceSize offset = 0;
+	VkDeviceSize size = 0;
+} MVKMappedMemoryRange;
+
 
 /** Represents a Vulkan device-space memory allocation. */
 class MVKDeviceMemory : public MVKVulkanAPIDeviceObject {
@@ -43,7 +52,7 @@ public:
 
 	/** Returns whether the memory is accessible from the host. */
     inline bool isMemoryHostAccessible() {
-#if MVK_IOS
+#if MVK_APPLE_SILICON
         if (_mtlStorageMode == MTLStorageModeMemoryless)
             return false;
 #endif
@@ -74,7 +83,17 @@ public:
 	/** Unmaps a previously mapped memory range. */
 	void unmap();
 
-	/** 
+	/**
+	 * If this device memory is currently mapped to host memory, returns the range within
+	 * this device memory that is currently mapped to host memory, or returns {0,0} if
+	 * this device memory is not currently mapped to host memory.
+	 */
+	inline const MVKMappedMemoryRange& getMappedRange() { return _mappedRange; }
+
+	/** Returns whether this device memory is currently mapped to host memory. */
+	bool isMapped() { return _mappedRange.size > 0; }
+
+	/**
 	 * If this memory is host-visible, the specified memory range is flushed to the device.
 	 * Normally, flushing will only occur if the device memory is non-coherent, but flushing
 	 * to coherent memory can be forced by setting evenIfCoherent to true.
@@ -87,7 +106,7 @@ public:
 	 * to coherent memory can be forced by setting evenIfCoherent to true.
 	 *
 	 * If pBlitEnc is not null, it points to a holder for a MTLBlitCommandEncoder and its
-	 * assocated MTLCommandBuffer. If this instance has a MTLBuffer using managed memory,
+	 * associated MTLCommandBuffer. If this instance has a MTLBuffer using managed memory,
 	 * this function may call synchronizeResource: on the MTLBlitCommandEncoder to
 	 * synchronize the GPU contents to the CPU. If the contents of the pBlitEnc do not
 	 * include a MTLBlitCommandEncoder and MTLCommandBuffer, this function will create
@@ -113,7 +132,7 @@ public:
 	/** Returns the Metal CPU cache mode used by this memory allocation. */
 	inline MTLCPUCacheMode getMTLCPUCacheMode() { return _mtlCPUCacheMode; }
 
-	/** Returns the Metal reource options used by this memory allocation. */
+	/** Returns the Metal resource options used by this memory allocation. */
 	inline MTLResourceOptions getMTLResourceOptions() { return mvkMTLResourceOptions(_mtlStorageMode, _mtlCPUCacheMode); }
 
 
@@ -127,32 +146,32 @@ public:
     ~MVKDeviceMemory() override;
 
 protected:
-	friend MVKBuffer;
-	friend MVKImage;
+	friend class MVKBuffer;
+    friend class MVKImageMemoryBinding;
+    friend class MVKImagePlane;
 
-	void propogateDebugName() override;
+	void propagateDebugName() override;
 	VkDeviceSize adjustMemorySize(VkDeviceSize size, VkDeviceSize offset);
 	VkResult addBuffer(MVKBuffer* mvkBuff);
 	void removeBuffer(MVKBuffer* mvkBuff);
-	VkResult addImage(MVKImage* mvkImg);
-	void removeImage(MVKImage* mvkImg);
+	VkResult addImageMemoryBinding(MVKImageMemoryBinding* mvkImg);
+	void removeImageMemoryBinding(MVKImageMemoryBinding* mvkImg);
 	bool ensureMTLHeap();
 	bool ensureMTLBuffer();
 	bool ensureHostMemory();
 	void freeHostMemory();
 	MVKResource* getDedicatedResource();
+	void initExternalMemory(VkExternalMemoryHandleTypeFlags handleTypes);
 
-	MVKVectorInline<MVKBuffer*, 4> _buffers;
-	MVKVectorInline<MVKImage*, 4> _images;
+	MVKSmallVector<MVKBuffer*, 4> _buffers;
+	MVKSmallVector<MVKImageMemoryBinding*, 4> _imageMemoryBindings;
 	std::mutex _rezLock;
     VkDeviceSize _allocationSize = 0;
-	VkDeviceSize _mapOffset = 0;
-	VkDeviceSize _mapSize = 0;
+	MVKMappedMemoryRange _mappedRange;
 	id<MTLBuffer> _mtlBuffer = nil;
 	id<MTLHeap> _mtlHeap = nil;
 	void* _pMemory = nullptr;
 	void* _pHostMemory = nullptr;
-	bool _isMapped = false;
 	bool _isDedicated = false;
 	MTLStorageMode _mtlStorageMode;
 	MTLCPUCacheMode _mtlCPUCacheMode;

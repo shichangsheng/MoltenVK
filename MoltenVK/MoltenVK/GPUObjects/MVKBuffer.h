@@ -1,7 +1,7 @@
 /*
  * MVKBuffer.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,27 +40,30 @@ public:
 #pragma mark Resource memory
 
 	/** Returns the memory requirements of this resource by populating the specified structure. */
-	VkResult getMemoryRequirements(VkMemoryRequirements* pMemoryRequirements) override;
+	VkResult getMemoryRequirements(VkMemoryRequirements* pMemoryRequirements);
 
 	/** Returns the memory requirements of this resource by populating the specified structure. */
-	VkResult getMemoryRequirements(const void* pInfo, VkMemoryRequirements2* pMemoryRequirements) override;
+	VkResult getMemoryRequirements(const void* pInfo, VkMemoryRequirements2* pMemoryRequirements);
 
 	/** Binds this resource to the specified offset within the specified memory allocation. */
 	VkResult bindDeviceMemory(MVKDeviceMemory* mvkMem, VkDeviceSize memOffset) override;
 
+	/** Binds this resource to the specified offset within the specified memory allocation. */
+	VkResult bindDeviceMemory2(const VkBindBufferMemoryInfo* pBindInfo);
+
 	/** Applies the specified global memory barrier. */
-    void applyMemoryBarrier(VkPipelineStageFlags srcStageMask,
-                            VkPipelineStageFlags dstStageMask,
-                            VkMemoryBarrier* pMemoryBarrier,
-                            MVKCommandEncoder* cmdEncoder,
-                            MVKCommandUse cmdUse) override;
+	void applyMemoryBarrier(VkPipelineStageFlags srcStageMask,
+							VkPipelineStageFlags dstStageMask,
+							MVKPipelineBarrier& barrier,
+							MVKCommandEncoder* cmdEncoder,
+							MVKCommandUse cmdUse) override;
 
 	/** Applies the specified buffer memory barrier. */
-    void applyBufferMemoryBarrier(VkPipelineStageFlags srcStageMask,
-                                  VkPipelineStageFlags dstStageMask,
-                                  VkBufferMemoryBarrier* pBufferMemoryBarrier,
-                                  MVKCommandEncoder* cmdEncoder,
-                                  MVKCommandUse cmdUse);
+	void applyBufferMemoryBarrier(VkPipelineStageFlags srcStageMask,
+								  VkPipelineStageFlags dstStageMask,
+								  MVKPipelineBarrier& barrier,
+								  MVKCommandEncoder* cmdEncoder,
+								  MVKCommandUse cmdUse);
 
     /** Returns the intended usage of this buffer. */
     VkBufferUsageFlags getUsage() const { return _usage; }
@@ -69,10 +72,13 @@ public:
 #pragma mark Metal
 
 	/** Returns the Metal buffer underlying this memory allocation. */
-	id<MTLBuffer> getMTLBuffer();
+    id<MTLBuffer> getMTLBuffer();
 
 	/** Returns the offset at which the contents of this instance starts within the underlying Metal buffer. */
-	inline NSUInteger getMTLBufferOffset() { return _deviceMemory && _deviceMemory->getMTLHeap() && !_isHostCoherentTexelBuffer ? 0 : _deviceMemoryOffset; }
+	inline NSUInteger getMTLBufferOffset() { return !_deviceMemory || _deviceMemory->getMTLHeap() ? 0 : _deviceMemoryOffset; }
+
+    /** Returns the Metal buffer used as a cache for host-coherent texel buffers. */
+    id<MTLBuffer> getMTLBufferCache();
 
 
 #pragma mark Construction
@@ -83,19 +89,22 @@ public:
 
 protected:
 	friend class MVKDeviceMemory;
-	using MVKResource::needsHostReadSync;
 
-	void propogateDebugName() override;
+	void propagateDebugName() override;
 	bool needsHostReadSync(VkPipelineStageFlags srcStageMask,
 						   VkPipelineStageFlags dstStageMask,
-						   VkBufferMemoryBarrier* pBufferMemoryBarrier);
+						   MVKPipelineBarrier& barrier);
+    bool overlaps(VkDeviceSize offset, VkDeviceSize size, VkDeviceSize &overlapOffset, VkDeviceSize &overlapSize);
 	bool shouldFlushHostMemory();
 	VkResult flushToDevice(VkDeviceSize offset, VkDeviceSize size);
 	VkResult pullFromDevice(VkDeviceSize offset, VkDeviceSize size);
+	void initExternalMemory(VkExternalMemoryHandleTypeFlags handleTypes);
 
 	VkBufferUsageFlags _usage;
 	bool _isHostCoherentTexelBuffer = false;
+    id<MTLBuffer> _mtlBufferCache = nil;
 	id<MTLBuffer> _mtlBuffer = nil;
+    std::mutex _lock;
 };
 
 
@@ -125,12 +134,12 @@ public:
     ~MVKBufferView() override;
 
 protected:
-	void propogateDebugName() override;
+	void propagateDebugName() override;
 
     MVKBuffer* _buffer;
+    NSUInteger _offset;
 	id<MTLTexture> _mtlTexture;
 	MTLPixelFormat _mtlPixelFormat;
-    NSUInteger _mtlBufferOffset;
 	NSUInteger _mtlBytesPerRow;
     VkExtent2D _textureSize;
 	std::mutex _lock;

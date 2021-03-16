@@ -1,7 +1,7 @@
 /*
  * MVKVulkanAPIObject.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,23 +24,11 @@ using namespace std;
 #pragma mark -
 #pragma mark MVKVulkanAPIObject
 
-void MVKVulkanAPIObject::retain() {
-	_refCount++;
-}
-
-void MVKVulkanAPIObject::release() {
-	if (--_refCount == 0) { MVKConfigurableObject::destroy(); }
-}
-
-void MVKVulkanAPIObject::destroy() {
-	release();
-}
-
 VkResult MVKVulkanAPIObject::setDebugName(const char* pObjectName) {
 	if (pObjectName) {
 		[_debugName release];
 		_debugName = [[NSString alloc] initWithUTF8String: pObjectName];	// retained
-		propogateDebugName();
+		propagateDebugName();
 	}
 	return VK_SUCCESS;
 }

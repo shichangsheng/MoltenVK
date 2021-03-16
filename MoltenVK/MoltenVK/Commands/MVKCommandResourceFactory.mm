@@ -1,7 +1,7 @@
 /*
  * MVKCommandResourceFactory.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@
 #include "MVKBuffer.h"
 #include "NSString+MoltenVK.h"
 #include "MTLRenderPipelineDescriptor+MoltenVK.h"
-#include "MVKLogging.h"
 
 using namespace std;
 
@@ -33,16 +32,28 @@ using namespace std;
 
 id<MTLRenderPipelineState> MVKCommandResourceFactory::newCmdBlitImageMTLRenderPipelineState(MVKRPSKeyBlitImg& blitKey,
 																							MVKVulkanAPIDeviceObject* owner) {
-	id<MTLFunction> vtxFunc = newFunctionNamed("vtxCmdBlitImage");				// temp retain
-	id<MTLFunction> fragFunc = newBlitFragFunction(blitKey);					// temp retain
-    MTLRenderPipelineDescriptor* plDesc = [MTLRenderPipelineDescriptor new];	// temp retain
+	bool isLayeredBlit = blitKey.dstSampleCount > 1 ? _device->_pMetalFeatures->multisampleLayeredRendering : _device->_pMetalFeatures->layeredRendering;
+	id<MTLFunction> vtxFunc = newFunctionNamed(isLayeredBlit ? "vtxCmdBlitImageLayered" : "vtxCmdBlitImage");	// temp retain
+	id<MTLFunction> fragFunc = newBlitFragFunction(blitKey);													// temp retain
+    MTLRenderPipelineDescriptor* plDesc = [MTLRenderPipelineDescriptor new];									// temp retain
     plDesc.label = @"CmdBlitImage";
 
 	plDesc.vertexFunction = vtxFunc;
 	plDesc.fragmentFunction = fragFunc;
 	plDesc.sampleCount = blitKey.dstSampleCount;
+	if (isLayeredBlit) {
+		plDesc.inputPrimitiveTopologyMVK = MTLPrimitiveTopologyClassTriangle;
+	}
 
-	plDesc.colorAttachments[0].pixelFormat = blitKey.getDstMTLPixelFormat();
+	if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT))) {
+		plDesc.depthAttachmentPixelFormat = blitKey.getDstMTLPixelFormat();
+	}
+	if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+		plDesc.stencilAttachmentPixelFormat = blitKey.getDstMTLPixelFormat();
+	}
+	if (!mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+		plDesc.colorAttachments[0].pixelFormat = blitKey.getDstMTLPixelFormat();
+	}
 
     MTLVertexDescriptor* vtxDesc = plDesc.vertexDescriptor;
 
@@ -57,14 +68,14 @@ id<MTLRenderPipelineState> MVKCommandResourceFactory::newCmdBlitImageMTLRenderPi
     vaDesc.format = MTLVertexFormatFloat2;
     vaDesc.bufferIndex = vtxBuffIdx;
     vaDesc.offset = vtxStride;
-    vtxStride += sizeof(simd::float2);
+    vtxStride += sizeof(simd::float4);
 
     // Vertex texture coords
     vaDesc = vaDescArray[1];
-    vaDesc.format = MTLVertexFormatFloat2;
+    vaDesc.format = MTLVertexFormatFloat3;
     vaDesc.bufferIndex = vtxBuffIdx;
     vaDesc.offset = vtxStride;
-    vtxStride += sizeof(simd::float2);
+    vtxStride += sizeof(simd::float4);
 
     // Vertex attribute buffer.
     MTLVertexBufferLayoutDescriptorArray* vbDescArray = vtxDesc.layouts;
@@ -118,8 +129,8 @@ id<MTLRenderPipelineState> MVKCommandResourceFactory::newCmdClearMTLRenderPipeli
     }
 	MVKPixelFormats* pixFmts = getPixelFormats();
     MTLPixelFormat mtlDSFormat = (MTLPixelFormat)attKey.attachmentMTLPixelFormats[kMVKClearAttachmentDepthStencilIndex];
-    if (pixFmts->mtlPixelFormatIsDepthFormat(mtlDSFormat)) { plDesc.depthAttachmentPixelFormat = mtlDSFormat; }
-    if (pixFmts->mtlPixelFormatIsStencilFormat(mtlDSFormat)) { plDesc.stencilAttachmentPixelFormat = mtlDSFormat; }
+    if (pixFmts->isDepthFormat(mtlDSFormat)) { plDesc.depthAttachmentPixelFormat = mtlDSFormat; }
+    if (pixFmts->isStencilFormat(mtlDSFormat)) { plDesc.stencilAttachmentPixelFormat = mtlDSFormat; }
 
     MTLVertexDescriptor* vtxDesc = plDesc.vertexDescriptor;
 
@@ -154,12 +165,44 @@ id<MTLRenderPipelineState> MVKCommandResourceFactory::newCmdClearMTLRenderPipeli
 
 id<MTLFunction> MVKCommandResourceFactory::newBlitFragFunction(MVKRPSKeyBlitImg& blitKey) {
 	@autoreleasepool {
+		bool isLayeredBlit = blitKey.dstSampleCount > 1 ? _device->_pMetalFeatures->multisampleLayeredRendering : _device->_pMetalFeatures->layeredRendering;
 		NSString* typeStr = getMTLFormatTypeString(blitKey.getSrcMTLPixelFormat());
 
 		bool isArrayType = blitKey.isSrcArrayType();
 		bool isLinearFilter = (blitKey.getSrcMTLSamplerMinMagFilter() == MTLSamplerMinMagFilterLinear);
-		NSString* arraySuffix = isArrayType ? @"_array" : @"";
-		NSString* sliceArg = isArrayType ? @", subRez.slice" : @"";
+		NSString* typePrefix = @"texture";
+		NSString* typeSuffix;
+		NSString* coordArg;
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT))) {
+			typePrefix = @"depth";
+		}
+		switch (blitKey.getSrcMTLTextureType()) {
+			case MTLTextureType1D:
+				typeSuffix = @"1d";
+				coordArg = @".x";
+				break;
+			case MTLTextureType1DArray:
+				typeSuffix = @"1d_array";
+				coordArg = @".x";
+				break;
+			case MTLTextureType2D:
+				typeSuffix = @"2d";
+				coordArg = @".xy";
+				break;
+			case MTLTextureType2DArray:
+				typeSuffix = @"2d_array";
+				coordArg = @".xy";
+				break;
+			case MTLTextureType3D:
+				typeSuffix = @"3d";
+				coordArg = @"";
+				break;
+			default:
+				typeSuffix = @"unsupported";
+				coordArg = @"";
+				break;
+		}
+		NSString* sliceArg = isArrayType ? (isLayeredBlit ? @", subRez.slice + varyings.v_layer" : @", subRez.slice") : @"";
 		NSString* srcFilter = isLinearFilter ? @"linear" : @"nearest";
 
 		NSMutableString* msl = [NSMutableString stringWithCapacity: (2 * KIBI) ];
@@ -168,8 +211,25 @@ id<MTLFunction> MVKCommandResourceFactory::newBlitFragFunction(MVKRPSKeyBlitImg&
 		[msl appendLineMVK];
 		[msl appendLineMVK: @"typedef struct {"];
 		[msl appendLineMVK: @"    float4 v_position [[position]];"];
-		[msl appendLineMVK: @"    float2 v_texCoord;"];
+		[msl appendLineMVK: @"    float3 v_texCoord;"];
+		if (isLayeredBlit && isArrayType) {
+			[msl appendLineMVK: @"    uint v_layer [[render_target_array_index]];"];
+		}
 		[msl appendLineMVK: @"} VaryingsPosTex;"];
+		[msl appendLineMVK];
+		[msl appendLineMVK: @"typedef struct {"];
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT))) {
+			[msl appendFormat: @"    %@ depth [[depth(any)]];", typeStr];
+			[msl appendLineMVK];
+		}
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendLineMVK: @"    uint stencil [[stencil]];"];
+		}
+		if (!mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"    %@4 color [[color(0)]];", typeStr];
+			[msl appendLineMVK];
+		}
+		[msl appendLineMVK: @"} FragmentOutputs;"];
 		[msl appendLineMVK];
 		[msl appendLineMVK: @"typedef struct {"];
 		[msl appendLineMVK: @"    uint slice;"];
@@ -177,17 +237,40 @@ id<MTLFunction> MVKCommandResourceFactory::newBlitFragFunction(MVKRPSKeyBlitImg&
 		[msl appendLineMVK: @"} TexSubrez;"];
 		[msl appendLineMVK];
 
-		[msl appendFormat: @"constexpr sampler ce_sampler(mip_filter::nearest, filter::%@);", srcFilter];
-		[msl appendLineMVK];
+		if (!mvkIsOnlyAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"constexpr sampler ce_sampler(mip_filter::nearest, filter::%@);", srcFilter];
+			[msl appendLineMVK];
+		}
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendLineMVK: @"constexpr sampler ce_stencil_sampler(mip_filter::nearest);"];
+		}
 
 		NSString* funcName = @"fragCmdBlitImage";
-		[msl appendFormat: @"fragment %@4 %@(VaryingsPosTex varyings [[stage_in]],", typeStr, funcName];
+		[msl appendFormat: @"fragment FragmentOutputs %@(VaryingsPosTex varyings [[stage_in]],", funcName];
 		[msl appendLineMVK];
-		[msl appendFormat: @"                         texture2d%@<%@> tex [[texture(0)]],", arraySuffix, typeStr];
-		[msl appendLineMVK];
+		if (!mvkIsOnlyAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"                         %@%@<%@> tex [[texture(0)]],", typePrefix, typeSuffix, typeStr];
+			[msl appendLineMVK];
+		}
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"                         texture%@<uint> stencilTex [[texture(1)]],", typeSuffix];
+			[msl appendLineMVK];
+		}
 		[msl appendLineMVK: @"                         constant TexSubrez& subRez [[buffer(0)]]) {"];
-		[msl appendFormat: @"    return tex.sample(ce_sampler, varyings.v_texCoord%@, level(subRez.lod));", sliceArg];
-		[msl appendLineMVK];
+		[msl appendLineMVK: @"    FragmentOutputs out;"];
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT))) {
+			[msl appendFormat: @"    out.depth = tex.sample(ce_sampler, varyings.v_texCoord%@%@, level(subRez.lod));", coordArg, sliceArg];
+			[msl appendLineMVK];
+		}
+		if (mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"    out.stencil = stencilTex.sample(ce_stencil_sampler, varyings.v_texCoord%@%@, level(subRez.lod)).x;", coordArg, sliceArg];
+			[msl appendLineMVK];
+		}
+		if (!mvkIsAnyFlagEnabled(blitKey.srcAspect, (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+			[msl appendFormat: @"    out.color = tex.sample(ce_sampler, varyings.v_texCoord%@%@, level(subRez.lod));", coordArg, sliceArg];
+			[msl appendLineMVK];
+		}
+		[msl appendLineMVK: @"    return out;"];
 		[msl appendLineMVK: @"}"];
 
 //		MVKLogDebug("\n%s", msl.UTF8String);
@@ -277,7 +360,7 @@ id<MTLFunction> MVKCommandResourceFactory::newClearFragFunction(MVKRPSKeyClearAt
 }
 
 NSString* MVKCommandResourceFactory::getMTLFormatTypeString(MTLPixelFormat mtlPixFmt) {
-	switch (getPixelFormats()->getFormatTypeFromMTLPixelFormat(mtlPixFmt)) {
+	switch (getPixelFormats()->getFormatType(mtlPixFmt)) {
 		case kMVKFormatColorHalf:		return @"half";
 		case kMVKFormatColorFloat:		return @"float";
 		case kMVKFormatColorInt8:
@@ -286,6 +369,7 @@ NSString* MVKCommandResourceFactory::getMTLFormatTypeString(MTLPixelFormat mtlPi
 		case kMVKFormatColorUInt16:		return @"ushort";
 		case kMVKFormatColorInt32:		return @"int";
 		case kMVKFormatColorUInt32:		return @"uint";
+		case kMVKFormatDepthStencil:	return @"float";
 		default:						return @"unexpected_type";
 	}
 }
@@ -369,7 +453,7 @@ MVKImage* MVKCommandResourceFactory::newMVKImage(MVKImageDescriptorData& imgData
         .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED
     };
 	MVKImage* mvkImg = _device->createImage(&createInfo, nullptr);
-	mvkImg->bindDeviceMemory(_transferImageMemory, 0);
+	mvkImg->bindDeviceMemory(_transferImageMemory, 0, 0);
 	return mvkImg;
 }
 
@@ -410,6 +494,34 @@ id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdFillBufferMTLComput
 	return newMTLComputePipelineState("cmdFillBuffer", owner);
 }
 
+#if MVK_MACOS
+id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdClearColorImageMTLComputePipelineState(MVKFormatType type,
+					MVKVulkanAPIDeviceObject* owner) {
+	const char* funcName;
+	switch (type) {
+		case kMVKFormatColorHalf:
+		case kMVKFormatColorFloat:
+			funcName = "cmdClearColorImage2DFloat";
+			break;
+		case kMVKFormatColorInt8:
+		case kMVKFormatColorInt16:
+		case kMVKFormatColorInt32:
+			funcName = "cmdClearColorImage2DInt";
+			break;
+		case kMVKFormatColorUInt8:
+		case kMVKFormatColorUInt16:
+		case kMVKFormatColorUInt32:
+			funcName = "cmdClearColorImage2DUInt";
+			break;
+		default:
+			owner->reportError(VK_ERROR_FORMAT_NOT_SUPPORTED,
+							   "Format type %u is not supported for clearing with a compute shader.", type);
+			return nil;
+	}
+	return newMTLComputePipelineState(funcName, owner);
+}
+#endif
+
 id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdCopyBufferToImage3DDecompressMTLComputePipelineState(bool needTempBuf,
 																												  MVKVulkanAPIDeviceObject* owner) {
 	return newMTLComputePipelineState(needTempBuf
@@ -417,11 +529,18 @@ id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdCopyBufferToImage3D
 									  : "cmdCopyBufferToImage3DDecompressDXTn", owner);
 }
 
-id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectConvertBuffersMTLComputePipelineState(bool indexed,
-																											   MVKVulkanAPIDeviceObject* owner) {
+id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectMultiviewConvertBuffersMTLComputePipelineState(bool indexed,
+																														MVKVulkanAPIDeviceObject* owner) {
 	return newMTLComputePipelineState(indexed
-									  ? "cmdDrawIndexedIndirectConvertBuffers"
-									  : "cmdDrawIndirectConvertBuffers", owner);
+									  ? "cmdDrawIndexedIndirectMultiviewConvertBuffers"
+									  : "cmdDrawIndirectMultiviewConvertBuffers", owner);
+}
+
+id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(bool indexed,
+																												   MVKVulkanAPIDeviceObject* owner) {
+	return newMTLComputePipelineState(indexed
+									  ? "cmdDrawIndexedIndirectTessConvertBuffers"
+									  : "cmdDrawIndirectTessConvertBuffers", owner);
 }
 
 id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndexedCopyIndexBufferMTLComputePipelineState(MTLIndexType type,
@@ -433,6 +552,10 @@ id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndexedCopyInde
 
 id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdCopyQueryPoolResultsMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner) {
 	return newMTLComputePipelineState("cmdCopyQueryPoolResultsToBuffer", owner);
+}
+
+id<MTLComputePipelineState> MVKCommandResourceFactory::newAccumulateOcclusionQueryResultsMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner) {
+	return newMTLComputePipelineState("accumulateOcclusionQueryResults", owner);
 }
 
 

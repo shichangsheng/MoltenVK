@@ -1,7 +1,7 @@
 /*
  * MVKDevice.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@
 
 #include "MVKFoundation.h"
 #include "MVKVulkanAPIObject.h"
+#include "MVKMTLResourceBindings.h"
 #include "MVKLayers.h"
 #include "MVKObjectPool.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 #include "MVKPixelFormats.h"
 #include "MVKOSExtensions.h"
 #include "mvk_datatypes.hpp"
-#include "vk_mvk_moltenvk.h"
 #include <string>
 #include <mutex>
 
@@ -49,13 +49,16 @@ class MVKSwapchain;
 class MVKDeviceMemory;
 class MVKFence;
 class MVKSemaphore;
+class MVKTimelineSemaphore;
 class MVKEvent;
+class MVKSemaphoreImpl;
 class MVKQueryPool;
 class MVKShaderModule;
 class MVKPipelineCache;
 class MVKPipelineLayout;
 class MVKPipeline;
 class MVKSampler;
+class MVKSamplerYcbcrConversion;
 class MVKDescriptorSetLayout;
 class MVKDescriptorPool;
 class MVKDescriptorUpdateTemplate;
@@ -64,6 +67,7 @@ class MVKRenderPass;
 class MVKCommandPool;
 class MVKCommandEncoder;
 class MVKCommandResourceFactory;
+class MVKPrivateDataSlot;
 
 
 /** The buffer index to use for vertex content. */
@@ -76,6 +80,7 @@ const static uint32_t kMVKMinSwapchainImageCount = 2;
 const static uint32_t kMVKMaxSwapchainImageCount = 3;
 const static uint32_t kMVKCachedViewportScissorCount = 16;
 const static uint32_t kMVKCachedColorAttachmentCount = 8;
+const static uint32_t kMVKMaxDescriptorSetCount = SPIRV_CROSS_NAMESPACE::kMaxArgumentBuffers;
 
 
 #pragma mark -
@@ -117,12 +122,9 @@ public:
 	void getFormatProperties(VkFormat format, VkFormatProperties* pFormatProperties);
 
 	/** Populates the specified structure with the format properties of this device. */
-	void getFormatProperties(VkFormat format, VkFormatProperties2KHR* pFormatProperties);
+	void getFormatProperties(VkFormat format, VkFormatProperties2* pFormatProperties);
 
-    /** 
-     * Populates the specified structure with the image format properties
-     * supported for the specified image characteristics on this device.
-     */
+	/** Populates the image format properties supported on this device. */
     VkResult getImageFormatProperties(VkFormat format,
                                       VkImageType type,
                                       VkImageTiling tiling,
@@ -130,12 +132,21 @@ public:
                                       VkImageCreateFlags flags,
                                       VkImageFormatProperties* pImageFormatProperties);
 
-    /** 
-     * Populates the specified structure with the image format properties
-     * supported for the specified image characteristics on this device.
-     */
-    VkResult getImageFormatProperties(const VkPhysicalDeviceImageFormatInfo2KHR* pImageFormatInfo,
-                                      VkImageFormatProperties2KHR* pImageFormatProperties);
+    /** Populates the image format properties supported on this device. */
+    VkResult getImageFormatProperties(const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
+                                      VkImageFormatProperties2* pImageFormatProperties);
+
+	/** Populates the external buffer properties supported on this device. */
+	void getExternalBufferProperties(const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo,
+									 VkExternalBufferProperties* pExternalBufferProperties);
+
+	/** Populates the external fence properties supported on this device. */
+	void getExternalFenceProperties(const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo,
+									VkExternalFenceProperties* pExternalFenceProperties);
+
+	/** Populates the external semaphore properties supported on this device. */
+	void getExternalSemaphoreProperties(const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo,
+										VkExternalSemaphoreProperties* pExternalSemaphoreProperties);
 
 #pragma mark Surfaces
 
@@ -244,13 +255,13 @@ public:
 #pragma mark Memory models
 
 	/** Returns a pointer to the memory characteristics of this device. */
-    inline const VkPhysicalDeviceMemoryProperties* getPhysicalDeviceMemoryProperties() { return &_memoryProperties; }
+    inline const VkPhysicalDeviceMemoryProperties* getMemoryProperties() { return &_memoryProperties; }
 
 	/** Populates the specified memory properties with the memory characteristics of this device. */
-	VkResult getPhysicalDeviceMemoryProperties(VkPhysicalDeviceMemoryProperties* pMemoryProperties);
+	VkResult getMemoryProperties(VkPhysicalDeviceMemoryProperties* pMemoryProperties);
 
 	/** Populates the specified memory properties with the memory characteristics of this device. */
-	VkResult getPhysicalDeviceMemoryProperties(VkPhysicalDeviceMemoryProperties2* pMemoryProperties);
+	VkResult getMemoryProperties(VkPhysicalDeviceMemoryProperties2* pMemoryProperties);
 
 	/**
 	 * Returns a bit mask of all memory type indices. 
@@ -285,11 +296,20 @@ public:
 	/** Returns whether this is a unified memory device. */
 	bool getHasUnifiedMemory();
 
+	/** Returns the external memory properties supported for buffers for the handle type. */
+	VkExternalMemoryProperties& getExternalBufferProperties(VkExternalMemoryHandleTypeFlagBits handleType);
+
+	/** Returns the external memory properties supported for images for the handle type. */
+	VkExternalMemoryProperties& getExternalImageProperties(VkExternalMemoryHandleTypeFlagBits handleType);
+
 	
 #pragma mark Metal
 
 	/** Populates the specified structure with the Metal-specific features of this device. */
 	inline const MVKPhysicalDeviceMetalFeatures* getMetalFeatures() { return &_metalFeatures; }
+
+	/** Returns whether or not vertex instancing can be used to implement multiview. */
+	inline bool canUseInstancingForMultiview() { return _metalFeatures.layeredRendering && _metalFeatures.deferredStoreActions; }
 
 	/** Returns the underlying Metal device. */
 	inline id<MTLDevice> getMTLDevice() { return _mtlDevice; }
@@ -301,6 +321,10 @@ public:
 			_mtlDevice = [mtlDevice retain];
 		}
 	}
+
+	/** Returns whether the MSL version is supported on this device. */
+	inline bool mslVersionIsAtLeast(MTLLanguageVersion minVer) { return _metalFeatures.mslVersionEnum >= minVer; }
+
 
 #pragma mark Construction
 
@@ -327,11 +351,12 @@ public:
 protected:
 	friend class MVKDevice;
 
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 	MTLFeatureSet getMaximalMTLFeatureSet();
     void initMetalFeatures();
 	void initFeatures();
 	void initProperties();
+	void initLimits();
 	void initGPUInfoProperties();
 	void initMemoryProperties();
 	void setMemoryHeap(uint32_t heapIndex, VkDeviceSize heapSize, VkMemoryHeapFlags heapFlags);
@@ -339,12 +364,13 @@ protected:
 	uint64_t getVRAMSize();
 	uint64_t getRecommendedMaxWorkingSetSize();
 	uint64_t getCurrentAllocatedSize();
+	void initExternalMemoryProperties();
 	void initExtensions();
-	MVKVector<MVKQueueFamily*>& getQueueFamilies();
+	MVKArrayRef<MVKQueueFamily*> getQueueFamilies();
 	void initPipelineCacheUUID();
 	uint32_t getHighestMTLFeatureSet();
-	uint64_t getSpirvCrossRevision();
-	bool getImageViewIsSupported(const VkPhysicalDeviceImageFormatInfo2KHR *pImageFormatInfo);
+	uint64_t getMoltenVKGitRevision();
+	void populate(VkPhysicalDeviceIDProperties* pDevIdProps);
 	void logGPUInfo();
 
 	id<MTLDevice> _mtlDevice;
@@ -355,13 +381,15 @@ protected:
 	VkPhysicalDeviceProperties _properties;
 	VkPhysicalDeviceTexelBufferAlignmentPropertiesEXT _texelBuffAlignProperties;
 	VkPhysicalDeviceMemoryProperties _memoryProperties;
-	MVKVectorInline<MVKQueueFamily*, kMVKQueueFamilyCount> _queueFamilies;
+	MVKSmallVector<MVKQueueFamily*, kMVKQueueFamilyCount> _queueFamilies;
 	MVKPixelFormats _pixelFormats;
 	uint32_t _allMemoryTypes;
 	uint32_t _hostVisibleMemoryTypes;
 	uint32_t _hostCoherentMemoryTypes;
 	uint32_t _privateMemoryTypes;
 	uint32_t _lazilyAllocatedMemoryTypes;
+	VkExternalMemoryProperties _mtlBufferExternalMemoryProperties;
+	VkExternalMemoryProperties _mtlTextureExternalMemoryProperties;
 };
 
 
@@ -405,11 +433,17 @@ public:
 	/** Returns the queue at the specified index within the specified family. */
 	MVKQueue* getQueue(uint32_t queueFamilyIndex, uint32_t queueIndex);
 
+	/** Returns the queue described by the specified structure. */
+	MVKQueue* getQueue(const VkDeviceQueueInfo2* queueInfo);
+
 	/** Retrieves the queue at the lowest queue and queue family indices used by the app. */
 	MVKQueue* getAnyQueue();
 
 	/** Block the current thread until all queues in this device are idle. */
 	VkResult waitIdle();
+	
+	/** Mark this device as lost. Releases all waits for this device. */
+	VkResult markLost();
 
 	/** Returns whether or not the given descriptor set layout is supported. */
 	void getDescriptorSetLayoutSupport(const VkDescriptorSetLayoutCreateInfo* pCreateInfo,
@@ -512,6 +546,11 @@ public:
 	void destroySampler(MVKSampler* mvkSamp,
 						const VkAllocationCallbacks* pAllocator);
 
+	MVKSamplerYcbcrConversion* createSamplerYcbcrConversion(const VkSamplerYcbcrConversionCreateInfo* pCreateInfo,
+										                    const VkAllocationCallbacks* pAllocator);
+	void destroySamplerYcbcrConversion(MVKSamplerYcbcrConversion* mvkSampConv,
+								       const VkAllocationCallbacks* pAllocator);
+
 	MVKDescriptorSetLayout* createDescriptorSetLayout(const VkDescriptorSetLayoutCreateInfo* pCreateInfo,
 													  const VkAllocationCallbacks* pAllocator);
 	void destroyDescriptorSetLayout(MVKDescriptorSetLayout* mvkDSL,
@@ -534,6 +573,8 @@ public:
 
 	MVKRenderPass* createRenderPass(const VkRenderPassCreateInfo* pCreateInfo,
 									const VkAllocationCallbacks* pAllocator);
+	MVKRenderPass* createRenderPass(const VkRenderPassCreateInfo2* pCreateInfo,
+									const VkAllocationCallbacks* pAllocator);
 	void destroyRenderPass(MVKRenderPass* mvkRP,
 						   const VkAllocationCallbacks* pAllocator);
 
@@ -547,15 +588,22 @@ public:
 	void freeMemory(MVKDeviceMemory* mvkDevMem,
 					const VkAllocationCallbacks* pAllocator);
 
+	VkResult createPrivateDataSlot(const VkPrivateDataSlotCreateInfoEXT* pCreateInfo,
+								   const VkAllocationCallbacks* pAllocator,
+								   VkPrivateDataSlotEXT* pPrivateDataSlot);
+
+	void destroyPrivateDataSlot(VkPrivateDataSlotEXT privateDataSlot,
+								const VkAllocationCallbacks* pAllocator);
+
 
 #pragma mark Operations
 
 	/** Applies the specified global memory barrier to all resource issued by this device. */
 	void applyMemoryBarrier(VkPipelineStageFlags srcStageMask,
 							VkPipelineStageFlags dstStageMask,
-							VkMemoryBarrier* pMemoryBarrier,
-                            MVKCommandEncoder* cmdEncoder,
-                            MVKCommandUse cmdUse);
+							MVKPipelineBarrier& barrier,
+							MVKCommandEncoder* cmdEncoder,
+							MVKCommandUse cmdUse);
 
     /**
 	 * If performance is being tracked, returns a monotonic timestamp value for use performance timestamping.
@@ -567,7 +615,7 @@ public:
 	 * number of nanoseconds between the two calls. The convenience function mvkGetElapsedMilliseconds()
 	 * can be used to perform this calculation.
      */
-    inline uint64_t getPerformanceTimestamp() { return _pMVKConfig->performanceTracking ? mvkGetTimestamp() : 0; }
+    inline uint64_t getPerformanceTimestamp() { return _isPerformanceTracking ? mvkGetTimestamp() : 0; }
 
     /**
      * If performance is being tracked, adds the performance for an activity with a duration
@@ -577,7 +625,7 @@ public:
      */
     inline void addActivityPerformance(MVKPerformanceTracker& activityTracker,
 									   uint64_t startTime, uint64_t endTime = 0) {
-		if (_pMVKConfig->performanceTracking) {
+		if (_isPerformanceTracking) {
 			updateActivityPerformance(activityTracker, startTime, endTime);
 
 			// Log call not locked. Very minor chance that the tracker data will be updated during log call,
@@ -601,8 +649,14 @@ public:
 	/** Returns the underlying Metal device. */
 	inline id<MTLDevice> getMTLDevice() { return _physicalDevice->getMTLDevice(); }
 
-	/** Returns standard compilation options to be used when compiling MSL shaders. */
-	inline MTLCompileOptions* getMTLCompileOptions() { return _mtlCompileOptions; }
+	/**
+	 * Returns an autoreleased options object to be used when compiling MSL shaders.
+	 * The useFastMath parameter is and-combined with MVKConfiguration::fastMathEnabled
+	 * to determine whether to enable fast math optimizations in the compiled shader.
+	 * The preserveInvariance parameter indicates that the shader requires the position
+	 * output invariance across invocations (typically for the position output).
+	 */
+	MTLCompileOptions* getMTLCompileOptions(bool useFastMath = true, bool preserveInvariance = false);
 
 	/** Returns the Metal vertex buffer index to use for the specified vertex attribute binding number.  */
 	uint32_t getMetalBufferIndexForVertexAttributeBinding(uint32_t binding);
@@ -628,11 +682,39 @@ public:
     /** Returns the memory type index corresponding to the specified Metal memory storage mode. */
     uint32_t getVulkanMemoryTypeIndex(MTLStorageMode mtlStorageMode);
 
+	/** Returns a default MTLSamplerState to populate empty array element descriptors. */
+	id<MTLSamplerState> getDefaultMTLSamplerState();
+
+	/**
+	 * Returns whether MTLCommandBuffers can be prefilled.
+	 *
+	 * This depends both on whether the app config has requested prefilling, and whether doing so will
+	 * interfere with other requested features, such as updating resource descriptors after bindings.
+	 */
+	bool shouldPrefillMTLCommandBuffers();
+
+	/**
+	 * Checks if automatic GPU capture is supported, and is enabled for the specified auto
+	 * capture scope, and if so, starts capturing from the specified Metal capture object.
+	 * The capture will be made either to Xcode, or to a file if one has been configured.
+	 *
+	 * The mtlCaptureObject must be one of:
+	 *   - MTLDevice for scope MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE_DEVICE
+	 *   - MTLCommandQueue for scope MVK_CONFIG_AUTO_GPU_CAPTURE_SCOPE_FRAME.
+	 */
+	void startAutoGPUCapture(MVKConfigAutoGPUCaptureScope autoGPUCaptureScope, id mtlCaptureObject);
+
+	/**
+	 * Checks if automatic GPU capture is enabled for the specified
+	 * auto capture scope, and if so, stops capturing.
+	 */
+	void stopAutoGPUCapture(MVKConfigAutoGPUCaptureScope autoGPUCaptureScope);
+
+	/** Returns whether this instance is currently automatically capturing a GPU trace. */
+	inline bool isCurrentlyAutoGPUCapturing() { return _isCurrentlyAutoGPUCapturing; }
+
 
 #pragma mark Properties directly accessible
-
-	/** Pointer to the MoltenVK configuration settings. */
-	const MVKConfiguration* _pMVKConfig;
 
 	/** Device features available and enabled. */
 	const VkPhysicalDeviceFeatures _enabledFeatures;
@@ -641,12 +723,16 @@ public:
 	const VkPhysicalDeviceFloat16Int8FeaturesKHR _enabledF16I8Features;
 	const VkPhysicalDeviceUniformBufferStandardLayoutFeaturesKHR _enabledUBOLayoutFeatures;
 	const VkPhysicalDeviceVariablePointerFeatures _enabledVarPtrFeatures;
+	const VkPhysicalDeviceDescriptorIndexingFeaturesEXT _enabledDescriptorIndexingFeatures;
+	const VkPhysicalDeviceInlineUniformBlockFeaturesEXT _enabledInlineUniformBlockFeatures;
 	const VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT _enabledInterlockFeatures;
 	const VkPhysicalDeviceHostQueryResetFeaturesEXT _enabledHostQryResetFeatures;
+	const VkPhysicalDeviceSamplerYcbcrConversionFeatures _enabledSamplerYcbcrConversionFeatures;
+	const VkPhysicalDevicePrivateDataFeaturesEXT _enabledPrivateDataFeatures;
 	const VkPhysicalDeviceScalarBlockLayoutFeaturesEXT _enabledScalarLayoutFeatures;
 	const VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT _enabledTexelBuffAlignFeatures;
 	const VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT _enabledVtxAttrDivFeatures;
-	const VkPhysicalDevicePortabilitySubsetFeaturesEXTX _enabledPortabilityFeatures;
+	const VkPhysicalDevicePortabilitySubsetFeaturesKHR _enabledPortabilityFeatures;
 
 	/** The list of Vulkan extensions, indicating whether each has been enabled by the app for this device. */
 	const MVKExtensionList _enabledExtensions;
@@ -686,34 +772,53 @@ public:
     }
 
 protected:
-	void propogateDebugName() override  {}
+	friend class MVKSemaphoreEmulated;
+	friend class MVKTimelineSemaphoreMTLEvent;
+	friend class MVKTimelineSemaphoreEmulated;
+	friend class MVKFence;
+	friend class MVKEventEmulated;
+
+	void propagateDebugName() override  {}
 	MVKResource* addResource(MVKResource* rez);
 	MVKResource* removeResource(MVKResource* rez);
+	void addSemaphore(MVKSemaphoreImpl* sem4);
+	void removeSemaphore(MVKSemaphoreImpl* sem4);
+	void addTimelineSemaphore(MVKTimelineSemaphore* sem4, uint64_t value);
+	void removeTimelineSemaphore(MVKTimelineSemaphore* sem4, uint64_t value);
     void initPerformanceTracking();
 	void initPhysicalDevice(MVKPhysicalDevice* physicalDevice, const VkDeviceCreateInfo* pCreateInfo);
 	void initQueues(const VkDeviceCreateInfo* pCreateInfo);
-	void initMTLCompileOptions();
+	void reservePrivateData(const VkDeviceCreateInfo* pCreateInfo);
 	void enableFeatures(const VkDeviceCreateInfo* pCreateInfo);
 	void enableFeatures(const VkBool32* pEnable, const VkBool32* pRequested, const VkBool32* pAvailable, uint32_t count);
 	void enableExtensions(const VkDeviceCreateInfo* pCreateInfo);
     const char* getActivityPerformanceDescription(MVKPerformanceTracker& activity, MVKPerformanceStatistics& perfStats);
 	void logActivityPerformance(MVKPerformanceTracker& activity, MVKPerformanceStatistics& perfStats, bool isInline = false);
 	void updateActivityPerformance(MVKPerformanceTracker& activity, uint64_t startTime, uint64_t endTime);
+	void getDescriptorVariableDescriptorCountLayoutSupport(const VkDescriptorSetLayoutCreateInfo* pCreateInfo,
+														   VkDescriptorSetLayoutSupport* pSupport,
+														   VkDescriptorSetVariableDescriptorCountLayoutSupportEXT* pVarDescSetCountSupport);
 
 	MVKPhysicalDevice* _physicalDevice;
     MVKCommandResourceFactory* _commandResourceFactory;
-	MTLCompileOptions* _mtlCompileOptions;
-	MVKVectorInline<MVKVectorInline<MVKQueue*, kMVKQueueCountPerQueueFamily>, kMVKQueueFamilyCount> _queuesByQueueFamilyIndex;
-	MVKVectorInline<MVKResource*, 256> _resources;
+	MVKSmallVector<MVKSmallVector<MVKQueue*, kMVKQueueCountPerQueueFamily>, kMVKQueueFamilyCount> _queuesByQueueFamilyIndex;
+	MVKSmallVector<MVKResource*, 256> _resources;
+	MVKSmallVector<MVKPrivateDataSlot*> _privateDataSlots;
+	MVKSmallVector<bool> _privateDataSlotsAvailability;
+	MVKSmallVector<MVKSemaphoreImpl*> _awaitingSemaphores;
+	MVKSmallVector<std::pair<MVKTimelineSemaphore*, uint64_t>> _awaitingTimelineSem4s;
 	std::mutex _rezLock;
+	std::mutex _sem4Lock;
     std::mutex _perfLock;
     id<MTLBuffer> _globalVisibilityResultMTLBuffer;
+	id<MTLSamplerState> _defaultMTLSamplerState;
     uint32_t _globalVisibilityQueryCount;
     std::mutex _vizLock;
 	bool _useMTLFenceForSemaphores;
 	bool _useMTLEventForSemaphores;
-	bool _useCommandPooling;
 	bool _logActivityPerformanceInline;
+	bool _isPerformanceTracking;
+	bool _isCurrentlyAutoGPUCapturing;
 };
 
 
@@ -733,6 +838,9 @@ public:
 
 	/** Returns the device for which this object was created. */
 	inline MVKDevice* getDevice() { return _device; }
+
+	/** Returns the physical device underlying this logical device. */
+	inline MVKPhysicalDevice* getPhysicalDevice() { return _device->getPhysicalDevice(); }
 
 	/** Returns the underlying Metal device. */
 	inline id<MTLDevice> getMTLDevice() { return _device->getMTLDevice(); }
@@ -788,6 +896,35 @@ protected:
 
 
 #pragma mark -
+#pragma mark MVKPrivateDataSlot
+
+/** Private data slot. */
+class MVKPrivateDataSlot : public MVKVulkanAPIDeviceObject {
+
+public:
+
+	/** Returns the Vulkan type of this object. */
+	VkObjectType getVkObjectType() override { return VK_OBJECT_TYPE_PRIVATE_DATA_SLOT_EXT; }
+
+	/** Returns the debug report object type of this object. */
+	VkDebugReportObjectTypeEXT getVkDebugReportObjectType() override { return VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT; }
+
+	void setData(VkObjectType objectType, uint64_t objectHandle, uint64_t data) { _privateData[objectHandle] = data; }
+
+	uint64_t getData(VkObjectType objectType, uint64_t objectHandle) { return _privateData[objectHandle]; }
+
+	void clearData() { _privateData.clear(); }
+
+	MVKPrivateDataSlot(MVKDevice* device) : MVKVulkanAPIDeviceObject(device) {}
+
+protected:
+	void propagateDebugName() override {}
+
+	std::unordered_map<uint64_t, uint64_t> _privateData;
+};
+
+
+#pragma mark -
 #pragma mark MVKDeviceObjectPool
 
 /** Manages a pool of instances of a particular object type that requires an MVKDevice during construction. */
@@ -819,3 +956,13 @@ protected:
 
 /** Returns the registry ID of the specified device, or zero if the device does not have a registry ID. */
 uint64_t mvkGetRegistryID(id<MTLDevice> mtlDevice);
+
+/** Redefinitions because Mac Catalyst doesn't support feature sets. */
+#if MVK_MACCAT
+#define MTLFeatureSet_macOS_GPUFamily1_v1		MTLGPUFamilyMacCatalyst1
+#define MTLFeatureSet_macOS_GPUFamily1_v2		MTLGPUFamilyMacCatalyst1
+#define MTLFeatureSet_macOS_GPUFamily1_v3		MTLGPUFamilyMacCatalyst1
+#define MTLFeatureSet_macOS_GPUFamily1_v4		MTLGPUFamilyMacCatalyst1
+
+#define MTLFeatureSet_macOS_GPUFamily2_v1		MTLGPUFamilyMacCatalyst2
+#endif

@@ -1,7 +1,7 @@
 /*
  * MVKQueue.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include "MVKCommandBuffer.h"
 #include "MVKImage.h"
 #include "MVKSync.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 #include <mutex>
 
 #import <Metal/Metal.h>
@@ -64,7 +64,7 @@ protected:
 	MVKPhysicalDevice* _physicalDevice;
     uint32_t _queueFamilyIndex;
 	VkQueueFamilyProperties _properties;
-	MVKVectorInline<id<MTLCommandQueue>, kMVKQueueCountPerQueueFamily> _mtlQueues;
+	MVKSmallVector<id<MTLCommandQueue>, kMVKQueueCountPerQueueFamily> _mtlQueues;
 	std::mutex _qLock;
 };
 
@@ -106,6 +106,9 @@ public:
 	/** Returns the Metal queue underlying this queue. */
 	inline id<MTLCommandQueue> getMTLCommandQueue() { return _mtlQueue; }
 
+	/** Returns a Metal command buffer from the Metal queue. */
+	id<MTLCommandBuffer> getMTLCommandBuffer(bool retainRefs = false);
+
 #pragma mark Construction
 	
 	/** Constructs an instance for the device and queue family. */
@@ -133,7 +136,7 @@ protected:
 	friend class MVKQueuePresentSurfaceSubmission;
 
 	MVKBaseObject* getBaseObject() override { return this; };
-	void propogateDebugName() override;
+	void propagateDebugName() override;
 	void initName();
 	void initExecQueue();
 	void initMTLCommandQueue();
@@ -147,9 +150,7 @@ protected:
 	dispatch_queue_t _execQueue;
 	id<MTLCommandQueue> _mtlQueue;
 	std::string _name;
-	MVKMTLCommandBufferID _nextMTLCmdBuffID;
 	MVKGPUCaptureScope* _submissionCaptureScope;
-	MVKGPUCaptureScope* _presentationCaptureScope;
 };
 
 
@@ -179,8 +180,7 @@ protected:
 	friend class MVKQueue;
 
 	MVKQueue* _queue;
-	MVKVectorInline<MVKSemaphore*, 8> _waitSemaphores;
-	bool _trackPerformance;
+	MVKSmallVector<std::pair<MVKSemaphore*, uint64_t>> _waitSemaphores;
 };
 
 
@@ -193,10 +193,7 @@ class MVKQueueCommandBufferSubmission : public MVKQueueSubmission {
 public:
 	void execute() override;
 
-	/** Constructs an instance for the queue. */
-	MVKQueueCommandBufferSubmission(MVKQueue* queue,
-									const VkSubmitInfo* pSubmit,
-									VkFence fence);
+	MVKQueueCommandBufferSubmission(MVKQueue* queue, const VkSubmitInfo* pSubmit, VkFence fence);
 
 protected:
 	friend MVKCommandBuffer;
@@ -205,11 +202,41 @@ protected:
 	void setActiveMTLCommandBuffer(id<MTLCommandBuffer> mtlCmdBuff);
 	void commitActiveMTLCommandBuffer(bool signalCompletion = false);
 	void finish();
+	virtual void submitCommandBuffers() {}
 
-	MVKVectorInline<MVKCommandBuffer*, 32> _cmdBuffers;
-	MVKVectorInline<MVKSemaphore*, 8> _signalSemaphores;
+	MVKSmallVector<std::pair<MVKSemaphore*, uint64_t>> _signalSemaphores;
 	MVKFence* _fence;
 	id<MTLCommandBuffer> _activeMTLCommandBuffer;
+};
+
+
+/**
+ * Submits the commands in a set of command buffers to the queue.
+ * Template class to balance vector pre-allocations between very common low counts and fewer larger counts.
+ */
+template <size_t N>
+class MVKQueueFullCommandBufferSubmission : public MVKQueueCommandBufferSubmission {
+
+public:
+	MVKQueueFullCommandBufferSubmission(MVKQueue* queue, const VkSubmitInfo* pSubmit, VkFence fence) :
+		MVKQueueCommandBufferSubmission(queue, pSubmit, fence) {
+
+			// pSubmit can be null if just tracking the fence alone
+			if (pSubmit) {
+				uint32_t cbCnt = pSubmit->commandBufferCount;
+				_cmdBuffers.reserve(cbCnt);
+				for (uint32_t i = 0; i < cbCnt; i++) {
+					MVKCommandBuffer* cb = MVKCommandBuffer::getMVKCommandBuffer(pSubmit->pCommandBuffers[i]);
+					_cmdBuffers.push_back(cb);
+					setConfigurationResult(cb->getConfigurationResult());
+				}
+			}
+		}
+
+protected:
+	void submitCommandBuffers() override { for (auto& cb : _cmdBuffers) { cb->submit(this); } }
+
+	MVKSmallVector<MVKCommandBuffer*, N> _cmdBuffers;
 };
 
 
@@ -227,7 +254,8 @@ public:
 
 protected:
 	id<MTLCommandBuffer> getMTLCommandBuffer();
+	void stopAutoGPUCapture();
 
-	MVKVectorInline<MVKPresentableSwapchainImage*, 4> _presentableImages;
+	MVKSmallVector<MVKPresentTimingInfo, 4> _presentInfo;
 };
 

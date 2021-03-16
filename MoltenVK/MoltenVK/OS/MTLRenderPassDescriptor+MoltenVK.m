@@ -1,7 +1,7 @@
 /*
  * MTLRenderPassDescriptor+MoltenVK.m
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 
 #include "MTLRenderPassDescriptor+MoltenVK.h"
-#include "MVKEnvironment.h"
+#include "MVKCommonEnvironment.h"
 
 @implementation MTLRenderPassDescriptor (MoltenVK)
 
@@ -26,6 +26,9 @@
 
 #if MVK_MACOS
 	return self.renderTargetArrayLength;
+#endif
+#if MVK_TVOS
+  return 0;
 #endif
 #if MVK_IOS
 	if ( [self respondsToSelector: @selector(renderTargetArrayLength)] ) {
@@ -51,10 +54,10 @@
 
 -(NSUInteger) renderTargetWidthMVK {
 
-#if MVK_MACOS
+#if MVK_TVOS
 	return 0;
 #endif
-#if MVK_IOS
+#if MVK_MACOS_OR_IOS
 	if ([self respondsToSelector: @selector(renderTargetWidth)])
 		return self.renderTargetWidth;
 	return 0;
@@ -64,7 +67,7 @@
 
 -(void) setRenderTargetWidthMVK: (NSUInteger) width {
 
-#if MVK_IOS
+#if MVK_MACOS_OR_IOS
 	if ([self respondsToSelector: @selector(setRenderTargetWidth:)])
 		self.renderTargetWidth = width;
 #endif
@@ -73,10 +76,10 @@
 
 -(NSUInteger) renderTargetHeightMVK {
 
-#if MVK_MACOS
+#if MVK_TVOS
 	return 0;
 #endif
-#if MVK_IOS
+#if MVK_MACOS_OR_IOS
 	if ([self respondsToSelector: @selector(renderTargetHeight)])
 		return self.renderTargetHeight;
 	return 0;
@@ -86,7 +89,7 @@
 
 -(void) setRenderTargetHeightMVK: (NSUInteger) height {
 
-#if MVK_IOS
+#if MVK_MACOS_OR_IOS
 	if ([self respondsToSelector: @selector(setRenderTargetHeight:)])
 		self.renderTargetHeight = height;
 #endif

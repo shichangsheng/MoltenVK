@@ -1,7 +1,7 @@
 /*
  * MVKQueryPool.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,12 @@
 
 #include "MVKQueryPool.h"
 #include "MVKBuffer.h"
+#include "MVKRenderPass.h"
 #include "MVKCommandBuffer.h"
 #include "MVKCommandEncodingPool.h"
 #include "MVKOSExtensions.h"
 #include "MVKFoundation.h"
-#include "MVKLogging.h"
+#include <sys/mman.h>
 
 using namespace std;
 
@@ -30,8 +31,12 @@ using namespace std;
 #pragma mark MVKQueryPool
 
 void MVKQueryPool::endQuery(uint32_t query, MVKCommandEncoder* cmdEncoder) {
+    uint32_t queryCount = cmdEncoder->isInRenderPass() ? cmdEncoder->getSubpass()->getViewCountInMetalPass(cmdEncoder->getMultiviewPassIndex()) : 1;
+    queryCount = max(queryCount, 1u);
     lock_guard<mutex> lock(_availabilityLock);
-    _availability[query] = DeviceAvailable;
+    for (uint32_t i = query; i < query + queryCount; ++i) {
+        _availability[i] = DeviceAvailable;
+    }
     lock_guard<mutex> copyLock(_deferredCopiesLock);
     if (!_deferredCopies.empty()) {
         // Partition by readiness.
@@ -47,9 +52,13 @@ void MVKQueryPool::endQuery(uint32_t query, MVKCommandEncoder* cmdEncoder) {
 }
 
 // Mark queries as available
-void MVKQueryPool::finishQueries(MVKVector<uint32_t>& queries) {
+void MVKQueryPool::finishQueries(const MVKArrayRef<uint32_t>& queries) {
     lock_guard<mutex> lock(_availabilityLock);
-    for (uint32_t qry : queries) { _availability[qry] = Available; }
+    for (uint32_t qry : queries) {
+        if (_availability[qry] == DeviceAvailable) {
+            _availability[qry] = Available;
+        }
+    }
     _availabilityBlocker.notify_all();      // Predicate of each wait() call will check whether all required queries are available
 }
 
@@ -67,6 +76,8 @@ VkResult MVKQueryPool::getResults(uint32_t firstQuery,
 								  void* pData,
 								  VkDeviceSize stride,
 								  VkQueryResultFlags flags) {
+	if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
+
 	unique_lock<mutex> lock(_availabilityLock);
 
 	uint32_t endQuery = firstQuery + queryCount;
@@ -95,6 +106,8 @@ bool MVKQueryPool::areQueriesDeviceAvailable(uint32_t firstQuery, uint32_t endQu
 
 // Returns whether all the queries between the start (inclusive) and end (exclusive) queries are available.
 bool MVKQueryPool::areQueriesHostAvailable(uint32_t firstQuery, uint32_t endQuery) {
+    // If we lost the device, stop waiting immediately.
+    if (_device->getConfigurationResult() != VK_SUCCESS) { return true; }
     for (uint32_t query = firstQuery; query < endQuery; query++) {
         if ( _availability[query] < Available ) { return false; }
     }
@@ -102,6 +115,8 @@ bool MVKQueryPool::areQueriesHostAvailable(uint32_t firstQuery, uint32_t endQuer
 }
 
 VkResult MVKQueryPool::getResult(uint32_t query, void* pQryData, VkQueryResultFlags flags) {
+
+	if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
 
 	bool isAvailable = _availability[query] == Available;
 	bool shouldOutput = (isAvailable || mvkAreAllFlagsEnabled(flags, VK_QUERY_RESULT_PARTIAL_BIT));
@@ -183,8 +198,13 @@ void MVKQueryPool::deferCopyResults(uint32_t firstQuery,
 #pragma mark -
 #pragma mark MVKTimestampQueryPool
 
+void MVKTimestampQueryPool::endQuery(uint32_t query, MVKCommandEncoder* cmdEncoder) {
+    cmdEncoder->markTimestamp(this, query);
+    MVKQueryPool::endQuery(query, cmdEncoder);
+}
+
 // Update timestamp values, then mark queries as available
-void MVKTimestampQueryPool::finishQueries(MVKVector<uint32_t>& queries) {
+void MVKTimestampQueryPool::finishQueries(const MVKArrayRef<uint32_t>& queries) {
     uint64_t ts = mvkGetTimestamp();
     for (uint32_t qry : queries) { _timestamps[qry] = ts; }
 
@@ -201,7 +221,11 @@ void MVKTimestampQueryPool::getResult(uint32_t query, void* pQryData, bool shoul
 
 id<MTLBuffer> MVKTimestampQueryPool::getResultBuffer(MVKCommandEncoder* cmdEncoder, uint32_t firstQuery, uint32_t queryCount, NSUInteger& offset) {
 	const MVKMTLBufferAllocation* tempBuff = cmdEncoder->getTempMTLBuffer(queryCount * _queryElementCount * sizeof(uint64_t));
-	memcpy(tempBuff->getContents(), &_timestamps[firstQuery], queryCount * _queryElementCount * sizeof(uint64_t));
+	void* pBuffData = tempBuff->getContents();
+	size_t size = queryCount * _queryElementCount * sizeof(uint64_t);
+	mlock(pBuffData, size);
+	memcpy(pBuffData, &_timestamps[firstQuery], size);
+	munlock(pBuffData, size);
 	offset = tempBuff->_offset;
 	return tempBuff->_mtlBuffer;
 }
@@ -223,7 +247,7 @@ MVKTimestampQueryPool::MVKTimestampQueryPool(MVKDevice* device,
 #pragma mark -
 #pragma mark MVKOcclusionQueryPool
 
-void MVKOcclusionQueryPool::propogateDebugName() { setLabelIfNotNil(_visibilityResultMTLBuffer, _debugName); }
+void MVKOcclusionQueryPool::propagateDebugName() { setLabelIfNotNil(_visibilityResultMTLBuffer, _debugName); }
 
 // If a dedicated visibility buffer has been established, use it, otherwise fetch the
 // current global visibility buffer, but don't cache it because it could be replaced later.
@@ -287,14 +311,17 @@ void MVKOcclusionQueryPool::encodeSetResultBuffer(MVKCommandEncoder* cmdEncoder,
 
 void MVKOcclusionQueryPool::beginQueryAddedTo(uint32_t query, MVKCommandBuffer* cmdBuffer) {
     NSUInteger offset = getVisibilityResultOffset(query);
-    NSUInteger maxOffset = getDevice()->_pMetalFeatures->maxQueryBufferSize - kMVKQuerySlotSizeInBytes;
+    NSUInteger queryCount = 1;
+    if (cmdBuffer->getLastMultiviewSubpass()) {
+        // In multiview passes, one query is used for each view.
+        queryCount = cmdBuffer->getLastMultiviewSubpass()->getViewCount();
+    }
+    NSUInteger maxOffset = getDevice()->_pMetalFeatures->maxQueryBufferSize - kMVKQuerySlotSizeInBytes * queryCount;
     if (offset > maxOffset) {
         cmdBuffer->setConfigurationResult(reportError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "vkCmdBeginQuery(): The query offset value %lu is larger than the maximum offset value %lu available on this device.", offset, maxOffset));
     }
 
-    if (cmdBuffer->_initialVisibilityResultMTLBuffer == nil) {
-        cmdBuffer->_initialVisibilityResultMTLBuffer = getVisibilityResultMTLBuffer();
-    }
+    cmdBuffer->_needsVisibilityResultMTLBuffer = true;
 }
 
 
@@ -303,7 +330,7 @@ void MVKOcclusionQueryPool::beginQueryAddedTo(uint32_t query, MVKCommandBuffer* 
 MVKOcclusionQueryPool::MVKOcclusionQueryPool(MVKDevice* device,
                                              const VkQueryPoolCreateInfo* pCreateInfo) : MVKQueryPool(device, pCreateInfo, 1) {
 
-    if (_device->_pMVKConfig->supportLargeQueryPools) {
+    if (mvkGetMVKConfiguration()->supportLargeQueryPools) {
         _queryIndexOffset = 0;
 
         // Ensure we don't overflow the maximum number of queries

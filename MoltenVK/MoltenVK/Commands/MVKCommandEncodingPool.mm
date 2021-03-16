@@ -1,7 +1,7 @@
 /*
  * MVKCommandEncodingPool.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,7 +77,14 @@ id<MTLDepthStencilState> MVKCommandEncodingPool::getMTLDepthStencilState(bool us
 	MVK_ENC_REZ_ACCESS(_cmdClearDefaultDepthStencilState, newMTLDepthStencilState(useDepth, useStencil));
 }
 
-const MVKMTLBufferAllocation* MVKCommandEncodingPool::acquireMTLBufferAllocation(NSUInteger length) {
+const MVKMTLBufferAllocation* MVKCommandEncodingPool::acquireMTLBufferAllocation(NSUInteger length, bool isPrivate, bool isDedicated) {
+    MVKAssert(isPrivate || !isDedicated, "Dedicated, host-shared temporary buffers are not supported."); 
+    if (isDedicated) {
+        return _dedicatedMtlBufferAllocator.acquireMTLBufferRegion(length);
+    }
+    if (isPrivate) {
+        return _privateMtlBufferAllocator.acquireMTLBufferRegion(length);
+    }
     return _mtlBufferAllocator.acquireMTLBufferRegion(length);
 }
 
@@ -102,12 +109,40 @@ id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdFillBufferMTLComputePi
 	MVK_ENC_REZ_ACCESS(_mtlFillBufferComputePipelineState, newCmdFillBufferMTLComputePipelineState(_commandPool));
 }
 
+#if MVK_MACOS
+static inline uint32_t getClearStateIndex(MVKFormatType type) {
+	switch (type) {
+		case kMVKFormatColorHalf:
+		case kMVKFormatColorFloat:
+			return 0;
+		case kMVKFormatColorInt8:
+		case kMVKFormatColorInt16:
+		case kMVKFormatColorInt32:
+			return 1;
+		case kMVKFormatColorUInt8:
+		case kMVKFormatColorUInt16:
+		case kMVKFormatColorUInt32:
+			return 2;
+		default:
+			return 0;
+	}
+}
+
+id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdClearColorImageMTLComputePipelineState(MVKFormatType type) {
+	MVK_ENC_REZ_ACCESS(_mtlClearColorImageComputePipelineState[getClearStateIndex(type)], newCmdClearColorImageMTLComputePipelineState(type, _commandPool));
+}
+#endif
+
 id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdCopyBufferToImage3DDecompressMTLComputePipelineState(bool needsTempBuff) {
 	MVK_ENC_REZ_ACCESS(_mtlCopyBufferToImage3DDecompressComputePipelineState[needsTempBuff ? 1 : 0], newCmdCopyBufferToImage3DDecompressMTLComputePipelineState(needsTempBuff, _commandPool));
 }
 
-id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndirectConvertBuffersMTLComputePipelineState(bool indexed) {
-	MVK_ENC_REZ_ACCESS(_mtlDrawIndirectConvertBuffersComputePipelineState[indexed ? 1 : 0], newCmdDrawIndirectConvertBuffersMTLComputePipelineState(indexed, _commandPool));
+id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndirectMultiviewConvertBuffersMTLComputePipelineState(bool indexed) {
+	MVK_ENC_REZ_ACCESS(_mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[indexed ? 1 : 0], newCmdDrawIndirectMultiviewConvertBuffersMTLComputePipelineState(indexed, _commandPool));
+}
+
+id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(bool indexed) {
+	MVK_ENC_REZ_ACCESS(_mtlDrawIndirectTessConvertBuffersComputePipelineState[indexed ? 1 : 0], newCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(indexed, _commandPool));
 }
 
 id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndexedCopyIndexBufferMTLComputePipelineState(MTLIndexType type) {
@@ -116,6 +151,10 @@ id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndexedCopyIndexBu
 
 id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdCopyQueryPoolResultsMTLComputePipelineState() {
 	MVK_ENC_REZ_ACCESS(_mtlCopyQueryPoolResultsComputePipelineState, newCmdCopyQueryPoolResultsMTLComputePipelineState(_commandPool));
+}
+
+id<MTLComputePipelineState> MVKCommandEncodingPool::getAccumulateOcclusionQueryResultsMTLComputePipelineState() {
+	MVK_ENC_REZ_ACCESS(_mtlAccumOcclusionQueryResultsComputePipelineState, newAccumulateOcclusionQueryResultsMTLComputePipelineState(_commandPool));
 }
 
 void MVKCommandEncodingPool::clear() {
@@ -127,7 +166,9 @@ void MVKCommandEncodingPool::clear() {
 #pragma mark Construction
 
 MVKCommandEncodingPool::MVKCommandEncodingPool(MVKCommandPool* commandPool) : _commandPool(commandPool),
-    _mtlBufferAllocator(commandPool->getDevice(), commandPool->getDevice()->_pMetalFeatures->maxMTLBufferSize, true) {
+    _mtlBufferAllocator(commandPool->getDevice(), commandPool->getDevice()->_pMetalFeatures->maxMTLBufferSize, true),
+    _privateMtlBufferAllocator(commandPool->getDevice(), commandPool->getDevice()->_pMetalFeatures->maxMTLBufferSize, true, false, MTLStorageModePrivate),
+    _dedicatedMtlBufferAllocator(commandPool->getDevice(), commandPool->getDevice()->_pMetalFeatures->maxQueryBufferSize, true, true, MTLStorageModePrivate) {
 }
 
 MVKCommandEncodingPool::~MVKCommandEncodingPool() {
@@ -174,15 +215,29 @@ void MVKCommandEncodingPool::destroyMetalResources() {
     [_mtlFillBufferComputePipelineState release];
     _mtlFillBufferComputePipelineState = nil;
 
+#if MVK_MACOS
+    [_mtlClearColorImageComputePipelineState[0] release];
+    [_mtlClearColorImageComputePipelineState[1] release];
+    [_mtlClearColorImageComputePipelineState[2] release];
+    _mtlClearColorImageComputePipelineState[0] = nil;
+    _mtlClearColorImageComputePipelineState[1] = nil;
+    _mtlClearColorImageComputePipelineState[2] = nil;
+#endif
+
     [_mtlCopyBufferToImage3DDecompressComputePipelineState[0] release];
     [_mtlCopyBufferToImage3DDecompressComputePipelineState[1] release];
     _mtlCopyBufferToImage3DDecompressComputePipelineState[0] = nil;
     _mtlCopyBufferToImage3DDecompressComputePipelineState[1] = nil;
 
-    [_mtlDrawIndirectConvertBuffersComputePipelineState[0] release];
-    [_mtlDrawIndirectConvertBuffersComputePipelineState[1] release];
-    _mtlDrawIndirectConvertBuffersComputePipelineState[0] = nil;
-    _mtlDrawIndirectConvertBuffersComputePipelineState[1] = nil;
+    [_mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[0] release];
+    [_mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[1] release];
+    _mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[0] = nil;
+    _mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[1] = nil;
+
+    [_mtlDrawIndirectTessConvertBuffersComputePipelineState[0] release];
+    [_mtlDrawIndirectTessConvertBuffersComputePipelineState[1] release];
+    _mtlDrawIndirectTessConvertBuffersComputePipelineState[0] = nil;
+    _mtlDrawIndirectTessConvertBuffersComputePipelineState[1] = nil;
 
     [_mtlDrawIndexedCopyIndexBufferComputePipelineState[0] release];
     [_mtlDrawIndexedCopyIndexBufferComputePipelineState[1] release];
@@ -191,5 +246,8 @@ void MVKCommandEncodingPool::destroyMetalResources() {
 
     [_mtlCopyQueryPoolResultsComputePipelineState release];
     _mtlCopyQueryPoolResultsComputePipelineState = nil;
+
+    [_mtlAccumOcclusionQueryResultsComputePipelineState release];
+    _mtlAccumOcclusionQueryResultsComputePipelineState = nil;
 }
 

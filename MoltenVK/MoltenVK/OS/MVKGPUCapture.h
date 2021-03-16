@@ -1,7 +1,7 @@
 /*
  * MVKGPUCapture.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ class MVKGPUCaptureScope : public MVKBaseObject {
 public:
 
 	/** Returns the Vulkan API opaque object controlling this object. */
-	MVKVulkanAPIObject* getVulkanAPIObject() override { return _queue->getVulkanAPIObject(); };
+	MVKVulkanAPIObject* getVulkanAPIObject() override { return nullptr; }
 
 	/** Marks the beginning boundary of a capture scope. */
 	void beginScope();
@@ -49,17 +49,15 @@ public:
 	void makeDefault();
 
 	/**
-	 * Constructs an instance for the specified queue and purpose.
+	 * Constructs an instance for the specified queue.
 	 *
-	 * The purpose is combined with the name of the queue to create a unique identification name
-	 * for this instance, which will be displayed in Xcode when selecting a capture scope to use.
+	 * If the queue has a debug name, it will be displayed in Xcode when selecting a capture scope to use.
 	 */
-	MVKGPUCaptureScope(MVKQueue* mvkQueue, const char* purpose);
+	MVKGPUCaptureScope(MVKQueue* mvkQueue);
 
 	~MVKGPUCaptureScope() override;
 
 protected:
-	MVKQueue* _queue;
 	id<MTLCaptureScope> _mtlCaptureScope = nil;
 	id<MTLCommandQueue> _mtlQueue = nil;
 	bool _isFirstBoundary = true;

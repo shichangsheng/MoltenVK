@@ -1,7 +1,7 @@
 /*
  * MVKLayers.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ MVKLayer::MVKLayer() : _supportedInstanceExtensions(nullptr, true) {
 	strcpy(_layerProperties.layerName, "MoltenVK");
 	mvkClear(_layerProperties.description, VK_MAX_DESCRIPTION_SIZE);
 	strcpy(_layerProperties.description, "MoltenVK driver layer");
-	_layerProperties.specVersion = MVK_VULKAN_API_VERSION;
+	_layerProperties.specVersion = mvkGetMVKConfiguration()->apiVersionToAdvertise;
 	_layerProperties.implementationVersion = MVK_VERSION;
 
 	((MVKExtensionList*)&_supportedInstanceExtensions)->disableAllButEnabledInstanceExtensions();
@@ -78,7 +78,7 @@ VkResult MVKLayerManager::getLayerProperties(uint32_t* pCount, VkLayerProperties
 		return VK_SUCCESS;
 	}
 
-	// Othewise, determine how many layers we'll return, and return that count
+	// Otherwise, determine how many layers we'll return, and return that count
 	uint32_t layerCnt = (uint32_t)_layers.size();
 	VkResult result = (*pCount >= layerCnt) ? VK_SUCCESS : VK_INCOMPLETE;
 	*pCount = min(layerCnt, *pCount);

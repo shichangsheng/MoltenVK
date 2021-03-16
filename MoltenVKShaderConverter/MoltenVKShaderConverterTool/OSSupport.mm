@@ -1,7 +1,7 @@
 /*
  * OSSupport.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include "OSSupport.h"
 #include "FileSupport.h"
 #include "MoltenVKShaderConverterTool.h"
+#include "MVKOSExtensions.h"
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -70,14 +71,17 @@ bool mvk::compile(const string& mslSourceCode,
 #define mslVer(MJ, MN, PT)	mslVersionMajor == MJ && mslVersionMinor == MN && mslVersionPoint == PT
 
 	MTLLanguageVersion mslVerEnum = (MTLLanguageVersion)0;
-	if (mslVer(2, 1, 0)) {
-		if (@available(macOS 10.14, *)) {
-			mslVerEnum = MTLLanguageVersion2_1;
-		}
+#if MVK_XCODE_12
+	if (mslVer(2, 3, 0)) {
+		mslVerEnum = MTLLanguageVersion2_3;
+	} else
+#endif
+	if (mslVer(2, 2, 0)) {
+		mslVerEnum = MTLLanguageVersion2_2;
+	} else if (mslVer(2, 1, 0)) {
+		mslVerEnum = MTLLanguageVersion2_1;
 	} else if (mslVer(2, 0, 0)) {
-		if (@available(macOS 10.13, *)) {
-			mslVerEnum = MTLLanguageVersion2_0;
-		}
+		mslVerEnum = MTLLanguageVersion2_0;
 	} else if (mslVer(1, 2, 0)) {
 		mslVerEnum = MTLLanguageVersion1_2;
 	} else if (mslVer(1, 1, 0)) {

@@ -1,7 +1,7 @@
 /*
  * MVKBaseObject.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,33 +21,10 @@
 #include "MVKInstance.h"
 #include "MVKFoundation.h"
 #include "MVKOSExtensions.h"
-#include "MVKLogging.h"
 #include <cxxabi.h>
 
 using namespace std;
 
-
-// The logging level
-// 0 = None
-// 1 = Errors only
-// 2 = All
-#ifndef MVK_CONFIG_LOG_LEVEL
-#   define MVK_CONFIG_LOG_LEVEL    2
-#endif
-
-static uint32_t _mvkLogLevel = MVK_CONFIG_LOG_LEVEL;
-static bool _mvkLoggingInitialized = false;
-
-// Returns log level from environment variable.
-// We do this once lazily instead of in a library constructor function to
-// ensure the NSProcessInfo environment is available when called upon.
-static inline uint32_t getMVKLogLevel() {
-	if ( !_mvkLoggingInitialized ) {
-		_mvkLoggingInitialized = true;
-		MVK_SET_FROM_ENV_OR_BUILD_INT32(_mvkLogLevel, MVK_CONFIG_LOG_LEVEL);
-	}
-	return _mvkLogLevel;
-}
 
 static const char* getReportingLevelString(int aslLvl) {
 	switch (aslLvl) {
@@ -102,7 +79,7 @@ void MVKBaseObject::reportMessage(MVKBaseObject* mvkObj, int aslLvl, const char*
 	MVKVulkanAPIObject* mvkAPIObj = mvkObj ? mvkObj->getVulkanAPIObject() : nullptr;
 	MVKInstance* mvkInst = mvkAPIObj ? mvkAPIObj->getInstance() : nullptr;
 	bool hasDebugCallbacks = mvkInst && mvkInst->hasDebugCallbacks();
-	bool shouldLog = (aslLvl < (getMVKLogLevel() << 2));
+	bool shouldLog = (aslLvl < (mvkGetMVKConfiguration()->logLevel << 2));
 
 	// Fail fast to avoid further unnecessary processing.
 	if ( !(shouldLog || hasDebugCallbacks) ) { return; }
@@ -119,10 +96,9 @@ void MVKBaseObject::reportMessage(MVKBaseObject* mvkObj, int aslLvl, const char*
 
 	// If message is too big for original buffer, allocate a buffer big enough to hold it and
 	// write the message out again. We only want to do this double writing if we have to.
-	// Create the redoBuff outside scope of if block to allow it to be referencable by pMessage later below.
 	int redoBuffSize = (msgLen >= kOrigBuffSize) ? msgLen + 1 : 0;
-	char redoBuff[redoBuffSize];
-	if (redoBuffSize > 0) {
+	char *redoBuff = NULL;
+	if (redoBuffSize > 0 && (redoBuff = (char *)malloc(redoBuffSize))) {
 		pMessage = redoBuff;
 		vsnprintf(redoBuff, redoBuffSize, format, redoArgs);
 	}
@@ -135,6 +111,8 @@ void MVKBaseObject::reportMessage(MVKBaseObject* mvkObj, int aslLvl, const char*
 
 	// Broadcast the message to any Vulkan debug report callbacks
 	if (hasDebugCallbacks) { mvkInst->debugReportMessage(mvkAPIObj, aslLvl, pMessage); }
+
+	free(redoBuff);
 }
 
 VkResult MVKBaseObject::reportError(VkResult vkErr, const char* format, ...) {

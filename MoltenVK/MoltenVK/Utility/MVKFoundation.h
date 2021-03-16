@@ -1,7 +1,7 @@
 /*
  * MVKFoundation.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,23 +23,15 @@
 #include "MVKCommonEnvironment.h"
 #include "mvk_vulkan.h"
 #include <algorithm>
+#include <cassert>
+#include <limits>
 #include <string>
+#include <cassert>
 #include <simd/simd.h>
+#include <type_traits>
 
 
 #pragma mark Math
-
-/**
- * The following constants are used to indicate values that have no defined limit.
- * They are ridiculously large numbers, but low enough to be safely used as both
- * uint and int values without risking overflowing between positive and negative values.
- */
-static int32_t kMVKUndefinedLargeNegativeInt32 = std::numeric_limits<int32_t>::min() / 2;
-static int32_t kMVKUndefinedLargePositiveInt32 = std::numeric_limits<int32_t>::max() / 2;
-static uint32_t kMVKUndefinedLargeUInt32 = kMVKUndefinedLargePositiveInt32;
-static int64_t kMVKUndefinedLargeNegativeInt64 = std::numeric_limits<int64_t>::min() / 2;
-static int64_t kMVKUndefinedLargePositiveInt64 = std::numeric_limits<int64_t>::max() / 2;
-static uint64_t kMVKUndefinedLargeUInt64 = kMVKUndefinedLargePositiveInt64;
 
 // Common scaling multipliers
 #define KIBI		(1024)
@@ -55,12 +47,6 @@ typedef uint16_t MVKHalfFloat;
 /** A representation of the value of 1.0 as a 16-bit half-float. */
 #define kHalfFloat1	0x3C00
 
-/** Common header for many standard Vulkan API structures. */
-typedef struct {
-	VkStructureType sType;
-	const void* pNext;
-} MVKVkAPIStructHeader;
-
 
 #pragma mark -
 #pragma mark Vertex content structures
@@ -68,7 +54,7 @@ typedef struct {
 /** 2D vertex position and texcoord content. */
 typedef struct {
 	simd::float2 position;
-	simd::float2 texCoord;
+	simd::float3 texCoord;
 } MVKVertexPosTex;
 
 
@@ -76,7 +62,7 @@ typedef struct {
 #pragma mark Vulkan support
 
 /** Tracks the Vulkan command currently being used. */
-typedef enum {
+typedef enum : uint8_t {
     kMVKCommandUseNone,                     /**< No use defined. */
     kMVKCommandUseQueueSubmit,              /**< vkQueueSubmit. */
     kMVKCommandUseQueuePresent,             /**< vkQueuePresentKHR. */
@@ -99,8 +85,10 @@ typedef enum {
     kMVKCommandUseClearDepthStencilImage,   /**< vkCmdClearDepthStencilImage. */
     kMVKCommandUseResetQueryPool,           /**< vkCmdResetQueryPool. */
     kMVKCommandUseDispatch,                 /**< vkCmdDispatch. */
-    kMVKCommandUseTessellationControl,      /**< vkCmdDraw* - tessellation control stage. */
-    kMVKCommandUseCopyQueryPoolResults      /**< vkCmdCopyQueryPoolResults. */
+    kMVKCommandUseTessellationVertexTessCtl,/**< vkCmdDraw* - vertex and tessellation control stages. */
+	kMVKCommandUseMultiviewInstanceCountAdjust,/**< vkCmdDrawIndirect* - adjust instance count for multiview. */
+    kMVKCommandUseCopyQueryPoolResults,     /**< vkCmdCopyQueryPoolResults. */
+    kMVKCommandUseAccumOcclusionQuery       /**< Any command terminating a Metal render pass with active visibility buffer. */
 } MVKCommandUse;
 
 /** Represents a given stage of a graphics pipeline. */
@@ -142,21 +130,23 @@ static inline std::string mvkGetMoltenVKVersionString(uint32_t mvkVersion) {
 #pragma mark -
 #pragma mark Alignment functions
 
-/** Returns whether the specified value is a power-of-two. */
-static inline bool mvkIsPowerOfTwo(uintptr_t value) {
+/** Returns whether the specified positive value is a power-of-two. */
+template<typename T>
+static inline bool mvkIsPowerOfTwo(T value) {
 	// Test POT:  (x != 0) && ((x & (x - 1)) == 0)
 	return value && ((value & (value - 1)) == 0);
 }
 
 /**
- * Ensures the specified value is a power-of-two. Returns the specified value if it is a
- * power-of-two value. If it is not, returns the next power-of-two value that is larger
- * than the specified value is returned.
+ * Ensures the specified positive value is a power-of-two. Returns the specified value
+ * if it is a power-of-two value. If it is not, returns the next power-of-two value
+ * that is larger than the specified value is returned.
  */
-static inline uintptr_t mvkEnsurePowerOfTwo(uintptr_t value) {
+template<typename T>
+static inline T mvkEnsurePowerOfTwo(T value) {
 	if (mvkIsPowerOfTwo(value)) { return value; }
 
-	uintptr_t pot = 1;
+	T pot = 1;
 	while(pot <= value) { pot <<= 1; };
 	return pot;
 }
@@ -167,12 +157,13 @@ static inline uintptr_t mvkEnsurePowerOfTwo(uintptr_t value) {
  *
  * This implementation returns zero for both zero and one as inputs.
  */
-static inline uint32_t mvkPowerOfTwoExponent(uintptr_t value) {
-    uintptr_t p2Value = mvkEnsurePowerOfTwo(value);
+template<typename T>
+static inline T mvkPowerOfTwoExponent(T value) {
+    T p2Value = mvkEnsurePowerOfTwo(value);
 
     // Count the trailing zeros
     p2Value = (p2Value ^ (p2Value - 1)) >> 1;  // Set trailing 0s to 1s and zero rest
-    uint32_t potExp = 0;
+    T potExp = 0;
     while (p2Value) {
         p2Value >>= 1;
         potExp++;
@@ -235,6 +226,18 @@ static inline uintptr_t mvkAlignByteCount(uintptr_t byteCount, uintptr_t byteAli
  * bytes in the data block must be at least (bytesPerRow * rowCount).
  */
 void mvkFlipVertically(void* rowMajorData, uint32_t rowCount, size_t bytesPerRow);
+
+/**
+ * The following constants are used to indicate values that have no defined limit.
+ * They are ridiculously large numbers, but low enough to be safely used as both
+ * uint and int values without risking overflowing between positive and negative values.
+ */
+static  int32_t kMVKUndefinedLargePositiveInt32 =  mvkEnsurePowerOfTwo(std::numeric_limits<int32_t>::max() / 2);
+static  int32_t kMVKUndefinedLargeNegativeInt32 = -kMVKUndefinedLargePositiveInt32;
+static uint32_t kMVKUndefinedLargeUInt32        =  kMVKUndefinedLargePositiveInt32;
+static  int64_t kMVKUndefinedLargePositiveInt64 =  mvkEnsurePowerOfTwo(std::numeric_limits<int64_t>::max() / 2);
+static  int64_t kMVKUndefinedLargeNegativeInt64 = -kMVKUndefinedLargePositiveInt64;
+static uint64_t kMVKUndefinedLargeUInt64        =  kMVKUndefinedLargePositiveInt64;
 
 
 #pragma mark Vulkan structure support functions
@@ -327,6 +330,9 @@ static inline bool mvkVkComponentMappingsMatch(VkComponentMapping cm1, VkCompone
 			mvkVKComponentSwizzlesMatch(cm1.a, cm2.a, VK_COMPONENT_SWIZZLE_A));
 }
 
+/** Print the size of the type. */
+#define mvkPrintSizeOf(type)    printf("Size of " #type " is %lu.\n", sizeof(type))
+
 
 #pragma mark -
 #pragma mark Template functions
@@ -346,10 +352,55 @@ const T& mvkClamp(const T& val, const T& lower, const T& upper) {
 }
 
 /** Returns the result of a division, rounded up. */
-template<typename T>
-T mvkCeilingDivide(T numerator, T denominator) {
+template<typename T, typename U>
+constexpr typename std::common_type<T, U>::type mvkCeilingDivide(T numerator, U denominator) {
+	typedef typename std::common_type<T, U>::type R;
 	// Short circuit very common usecase of dividing by one.
-	return (denominator == 1) ? numerator : (numerator + denominator - 1) / denominator;
+	return (denominator == 1) ? numerator : (R(numerator) + denominator - 1) / denominator;
+}
+
+/** Returns the absolute value of a number. */
+template<typename R, typename T, bool = std::is_signed<T>::value>
+struct MVKAbs;
+
+template<typename R, typename T>
+struct MVKAbs<R, T, true> {
+	static constexpr R eval(T x) noexcept {
+		return x >= 0 ? x : (x == std::numeric_limits<T>::min() ? -static_cast<R>(x) : -x);
+	}
+};
+
+template<typename R, typename T>
+struct MVKAbs<R, T, false> {
+	static constexpr R eval(T x) noexcept {
+		return x;
+	}
+};
+
+/** Returns the absolute value of the difference of two numbers. */
+template<typename T, typename U>
+constexpr typename std::common_type<T, U>::type mvkAbsDiff(T x, U y) {
+	return x >= y ? x - y : y - x;
+}
+
+/** Returns the greatest common divisor of two numbers. */
+template<typename T>
+constexpr T mvkGreatestCommonDivisorImpl(T a, T b) {
+	return b == 0 ? a : mvkGreatestCommonDivisorImpl(b, a % b);
+}
+
+template<typename T, typename U>
+constexpr typename std::common_type<T, U>::type mvkGreatestCommonDivisor(T a, U b) {
+	typedef typename std::common_type<T, U>::type R;
+	typedef typename std::make_unsigned<R>::type UI;
+	return static_cast<R>(mvkGreatestCommonDivisorImpl(static_cast<UI>(MVKAbs<R, T>::eval(a)), static_cast<UI>(MVKAbs<R, U>::eval(b))));
+}
+
+/** Returns the least common multiple of two numbers. */
+template<typename T, typename U>
+constexpr typename std::common_type<T, U>::type mvkLeastCommonMultiple(T a, U b) {
+	typedef typename std::common_type<T, U>::type R;
+	return (a == 0 && b == 0) ? 0 : MVKAbs<R, T>::eval(a) / mvkGreatestCommonDivisor(a, b) * MVKAbs<R, U>::eval(b);
 }
 
 
@@ -372,6 +423,23 @@ std::size_t mvkHash(const N* pVals, std::size_t count = 1, std::size_t seed = 53
 
 
 #pragma mark Containers
+
+/**
+ * Structure to reference an array of typed elements in contiguous memory.
+ * Allocation and management of the memory is handled externally.
+ */
+template<typename Type>
+struct MVKArrayRef {
+	Type* data;
+	const size_t size;
+
+	const Type* begin() const { return data; }
+	const Type* end() const { return &data[size]; }
+	const Type& operator[]( const size_t i ) const { return data[i]; }
+	Type& operator[]( const size_t i ) { return data[i]; }
+	MVKArrayRef() : MVKArrayRef(nullptr, 0) {}
+	MVKArrayRef(Type* d, size_t s) : data(d), size(s) {}
+};
 
 /** Ensures the size of the specified container is at least the specified size. */
 template<typename C, typename S>
@@ -403,7 +471,7 @@ void mvkReleaseContainerContents(C& container) {
 
 /** Returns whether the container contains an item equal to the value. */
 template<class C, class T>
-bool contains(const C& container, const T& val) {
+bool contains(C& container, const T& val) {
 	for (const T& cVal : container) { if (cVal == val) { return true; } }
 	return false;
 }
@@ -431,7 +499,7 @@ void mvkRemoveAllOccurances(C& container, T val) {
 /** Selects and returns one of the values, based on the platform OS. */
 template<typename T>
 const T& mvkSelectPlatformValue(const T& macOSVal, const T& iOSVal) {
-#if MVK_IOS
+#if MVK_IOS_OR_TVOS
 	return iOSVal;
 #endif
 #if MVK_MACOS
@@ -506,7 +574,7 @@ void mvkDisableFlags(Tv& value, const Tm bitMask) { value = (Tv)(value & ~(Tv)bi
 
 /** Returns whether the specified value has ANY of the flags specified in bitMask enabled (set to 1). */
 template<typename Tv, typename Tm>
-bool mvkIsAnyFlagEnabled(Tv value, const Tm bitMask) { return !!(value & bitMask); }
+bool mvkIsAnyFlagEnabled(Tv value, const Tm bitMask) { return ((value & bitMask) != 0); }
 
 /** Returns whether the specified value has ALL of the flags specified in bitMask enabled (set to 1). */
 template<typename Tv, typename Tm>

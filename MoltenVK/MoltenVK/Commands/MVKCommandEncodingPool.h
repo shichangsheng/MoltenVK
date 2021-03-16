@@ -1,7 +1,7 @@
 /*
  * MVKCommandEncodingPool.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ public:
      * To return the returned allocation back to the pool to be reused,
      * call the returnToPool() function on the returned allocation.
      */
-    const MVKMTLBufferAllocation* acquireMTLBufferAllocation(NSUInteger length);
+    const MVKMTLBufferAllocation* acquireMTLBufferAllocation(NSUInteger length, bool isPrivate = false, bool isDedicated = false);
 
 	/**
 	 * Returns a MTLRenderPipelineState dedicated to rendering to several attachments
@@ -109,17 +109,28 @@ public:
 	/** Returns a MTLComputePipelineState for filling a buffer. */
 	id<MTLComputePipelineState> getCmdFillBufferMTLComputePipelineState();
 
+#if MVK_MACOS
+	/** Returns a MTLComputePipelineState for clearing an image. Currently only used for 2D linear images on Mac. */
+	id<MTLComputePipelineState> getCmdClearColorImageMTLComputePipelineState(MVKFormatType type);
+#endif
+
 	/** Returns a MTLComputePipelineState for decompressing a buffer into a 3D image. */
 	id<MTLComputePipelineState> getCmdCopyBufferToImage3DDecompressMTLComputePipelineState(bool needsTempBuff);
 
+	/** Returns a MTLComputePipelineState for converting an indirect buffer for use in a multiview draw. */
+	id<MTLComputePipelineState> getCmdDrawIndirectMultiviewConvertBuffersMTLComputePipelineState(bool indexed);
+
 	/** Returns a MTLComputePipelineState for converting an indirect buffer for use in a tessellated draw. */
-	id<MTLComputePipelineState> getCmdDrawIndirectConvertBuffersMTLComputePipelineState(bool indexed);
+	id<MTLComputePipelineState> getCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(bool indexed);
 
 	/** Returns a MTLComputePipelineState for copying an index buffer for use in an indirect tessellated draw. */
 	id<MTLComputePipelineState> getCmdDrawIndexedCopyIndexBufferMTLComputePipelineState(MTLIndexType type);
 
 	/** Returns a MTLComputePipelineState for copying query results to a buffer. */
 	id<MTLComputePipelineState> getCmdCopyQueryPoolResultsMTLComputePipelineState();
+
+	/** Returns a MTLComputePipelineState for accumulating occlusion query results over multiple render passes. */
+	id<MTLComputePipelineState> getAccumulateOcclusionQueryResultsMTLComputePipelineState();
 
 	/** Deletes all the internal resources. */
 	void clear();
@@ -142,15 +153,22 @@ protected:
     std::unordered_map<MVKBufferDescriptorData, MVKBuffer*> _transferBuffers;
     std::unordered_map<MVKBufferDescriptorData, MVKDeviceMemory*> _transferBufferMemory;
     MVKMTLBufferAllocator _mtlBufferAllocator;
+    MVKMTLBufferAllocator _privateMtlBufferAllocator;
+    MVKMTLBufferAllocator _dedicatedMtlBufferAllocator;
     id<MTLDepthStencilState> _cmdClearDepthOnlyDepthStencilState = nil;
     id<MTLDepthStencilState> _cmdClearStencilOnlyDepthStencilState = nil;
     id<MTLDepthStencilState> _cmdClearDepthAndStencilDepthStencilState = nil;
     id<MTLDepthStencilState> _cmdClearDefaultDepthStencilState = nil;
     id<MTLComputePipelineState> _mtlCopyBufferBytesComputePipelineState = nil;
 	id<MTLComputePipelineState> _mtlFillBufferComputePipelineState = nil;
+#if MVK_MACOS
+	id<MTLComputePipelineState> _mtlClearColorImageComputePipelineState[3] = {nil, nil, nil};
+#endif
 	id<MTLComputePipelineState> _mtlCopyBufferToImage3DDecompressComputePipelineState[2] = {nil, nil};
-	id<MTLComputePipelineState> _mtlDrawIndirectConvertBuffersComputePipelineState[2] = {nil, nil};
+	id<MTLComputePipelineState> _mtlDrawIndirectMultiviewConvertBuffersComputePipelineState[2] = {nil, nil};
+	id<MTLComputePipelineState> _mtlDrawIndirectTessConvertBuffersComputePipelineState[2] = {nil, nil};
 	id<MTLComputePipelineState> _mtlDrawIndexedCopyIndexBufferComputePipelineState[2] = {nil, nil};
 	id<MTLComputePipelineState> _mtlCopyQueryPoolResultsComputePipelineState = nil;
+	id<MTLComputePipelineState> _mtlAccumOcclusionQueryResultsComputePipelineState = nil;
 };
 

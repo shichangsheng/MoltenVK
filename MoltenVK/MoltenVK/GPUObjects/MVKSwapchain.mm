@@ -1,7 +1,7 @@
 /*
  * MVKSwapchain.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,9 +26,12 @@
 #include "MVKWatermarkTextureContent.h"
 #include "MVKWatermarkShaderSource.h"
 #include "mvk_datatypes.hpp"
-#include "MVKLogging.h"
 #import "CAMetalLayer+MoltenVK.h"
 #import "MVKBlockObserver.h"
+
+#if MVK_IOS_OR_TVOS
+#	include <UIKit/UIScreen.h>
+#endif
 
 #include <libkern/OSByteOrder.h>
 
@@ -38,7 +41,7 @@ using namespace std;
 #pragma mark -
 #pragma mark MVKSwapchain
 
-void MVKSwapchain::propogateDebugName() {
+void MVKSwapchain::propagateDebugName() {
 	if (_debugName) {
 		size_t imgCnt = _presentableImages.size();
 		for (size_t imgIdx = 0; imgIdx < imgCnt; imgIdx++) {
@@ -78,6 +81,7 @@ VkResult MVKSwapchain::acquireNextImageKHR(uint64_t timeout,
 										   uint32_t deviceMask,
 										   uint32_t* pImageIndex) {
 
+	if ( _device->getConfigurationResult() != VK_SUCCESS ) { return _device->getConfigurationResult(); }
 	if ( getIsSurfaceLost() ) { return VK_ERROR_SURFACE_LOST_KHR; }
 
 	// Find the image that has the shortest wait by finding the smallest availability measure.
@@ -119,14 +123,14 @@ void MVKSwapchain::willPresentSurface(id<MTLTexture> mtlTexture, id<MTLCommandBu
 
 // If the product has not been fully licensed, renders the watermark image to the surface.
 void MVKSwapchain::renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffer> mtlCmdBuff) {
-    if (_device->_pMVKConfig->displayWatermark) {
+    if (mvkGetMVKConfiguration()->displayWatermark) {
         if ( !_licenseWatermark ) {
             _licenseWatermark = new MVKWatermarkRandom(getMTLDevice(),
                                                        __watermarkTextureContent,
                                                        __watermarkTextureWidth,
                                                        __watermarkTextureHeight,
                                                        __watermarkTextureFormat,
-                                                       getPixelFormats()->getMTLPixelFormatBytesPerRow(__watermarkTextureFormat, __watermarkTextureWidth),
+                                                       getPixelFormats()->getBytesPerRow(__watermarkTextureFormat, __watermarkTextureWidth),
                                                        __watermarkShaderSource);
         }
 		_licenseWatermark->render(mtlTexture, mtlCmdBuff, 0.02f);
@@ -140,7 +144,7 @@ void MVKSwapchain::renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffe
 
 // Calculates and remembers the time interval between frames.
 void MVKSwapchain::markFrameInterval() {
-	if ( !(_device->_pMVKConfig->performanceTracking || _licenseWatermark) ) { return; }
+	if ( !(mvkGetMVKConfiguration()->performanceTracking || _licenseWatermark) ) { return; }
 
 	uint64_t prevFrameTime = _lastFrameTime;
 	_lastFrameTime = mvkGetTimestamp();
@@ -149,7 +153,7 @@ void MVKSwapchain::markFrameInterval() {
 
 	_device->addActivityPerformance(_device->_performanceStatistics.queue.frameInterval, prevFrameTime, _lastFrameTime);
 
-	uint32_t perfLogCntLimit = _device->_pMVKConfig->performanceLoggingFrameCount;
+	uint32_t perfLogCntLimit = mvkGetMVKConfiguration()->performanceLoggingFrameCount;
 	if ((perfLogCntLimit > 0) && (++_currentPerfLogFrameCount >= perfLogCntLimit)) {
 		_currentPerfLogFrameCount = 0;
 		MVKLogInfo("Performance statistics reporting every: %d frames, avg FPS: %.2f, elapsed time: %.3f seconds:",
@@ -235,8 +239,12 @@ MVKSwapchain::MVKSwapchain(MVKDevice* device,
 	_layerObserver(nil),
 	_currentPerfLogFrameCount(0),
 	_lastFrameTime(0),
-	_licenseWatermark(nil) {
+	_licenseWatermark(nil),
+	_presentHistoryCount(0),
+	_presentHistoryIndex(0),
+	_presentHistoryHeadIndex(0) {
 
+	memset(_presentTimingHistory, 0, sizeof(_presentTimingHistory));
 	// If applicable, release any surfaces (not currently being displayed) from the old swapchain.
 	MVKSwapchain* oldSwapchain = (MVKSwapchain*)pCreateInfo->oldSwapchain;
 	if (oldSwapchain) { oldSwapchain->releaseUndisplayedSurfaces(); }
@@ -260,10 +268,10 @@ void MVKSwapchain::initCAMetalLayer(const VkSwapchainCreateInfoKHR* pCreateInfo,
 
 	_mtlLayer = mvkSrfc->getCAMetalLayer();
 	_mtlLayer.device = getMTLDevice();
-	_mtlLayer.pixelFormat = getPixelFormats()->getMTLPixelFormatFromVkFormat(pCreateInfo->imageFormat);
+	_mtlLayer.pixelFormat = getPixelFormats()->getMTLPixelFormat(pCreateInfo->imageFormat);
 	_mtlLayer.maximumDrawableCountMVK = imgCnt;
 	_mtlLayer.displaySyncEnabledMVK = (pCreateInfo->presentMode != VK_PRESENT_MODE_IMMEDIATE_KHR);
-	_mtlLayer.magnificationFilter = _device->_pMVKConfig->swapchainMagFilterUseNearest ? kCAFilterNearest : kCAFilterLinear;
+	_mtlLayer.magnificationFilter = mvkGetMVKConfiguration()->swapchainMagFilterUseNearest ? kCAFilterNearest : kCAFilterLinear;
 	_mtlLayer.framebufferOnly = !mvkIsAnyFlagEnabled(pCreateInfo->imageUsage, (VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 																			   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
 																			   VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -274,52 +282,60 @@ void MVKSwapchain::initCAMetalLayer(const VkSwapchainCreateInfoKHR* pCreateInfo,
 
 	switch (pCreateInfo->imageColorSpace) {
 		case VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceSRGB;
+			_mtlLayer.wantsExtendedDynamicRangeContentMVK = NO;
 			break;
 		case VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceDisplayP3;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceExtendedLinearSRGB;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceExtendedSRGB;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_DISPLAY_P3_LINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearDisplayP3);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceExtendedLinearDisplayP3;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_DCI_P3_NONLINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceDCIP3);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceDCIP3;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_BT709_NONLINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceITUR_709);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceITUR_709;
+			_mtlLayer.wantsExtendedDynamicRangeContentMVK = NO;
 			break;
 		case VK_COLOR_SPACE_BT2020_LINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearITUR_2020);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceExtendedLinearITUR_2020;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
+#if MVK_XCODE_12
 		case VK_COLOR_SPACE_HDR10_ST2084_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceITUR_2020_PQ_EOTF);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceITUR_2100_PQ;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
 		case VK_COLOR_SPACE_HDR10_HLG_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceITUR_2020_HLG);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceITUR_2100_HLG;
 			_mtlLayer.wantsExtendedDynamicRangeContentMVK = YES;
 			break;
+#endif
 		case VK_COLOR_SPACE_ADOBERGB_NONLINEAR_EXT:
-			_mtlLayer.colorspace = CGColorSpaceCreateWithName(kCGColorSpaceAdobeRGB1998);
+			_mtlLayer.colorspaceNameMVK = kCGColorSpaceAdobeRGB1998;
+			_mtlLayer.wantsExtendedDynamicRangeContentMVK = NO;
 			break;
 		case VK_COLOR_SPACE_PASS_THROUGH_EXT:
+			_mtlLayer.colorspace = nil;
+			_mtlLayer.wantsExtendedDynamicRangeContentMVK = NO;
+			break;
 		default:
-			// Nothing - the default is not to do color matching.
+			setConfigurationResult(reportError(VK_ERROR_FORMAT_NOT_SUPPORTED, "vkCreateSwapchainKHR(): Metal does not support VkColorSpaceKHR value %d.", pCreateInfo->imageColorSpace));
 			break;
 	}
-	_mtlLayerOrigDrawSize = _mtlLayer.updatedDrawableSizeMVK;
+	_mtlLayer.drawableSize = mvkCGSizeFromVkExtent2D(pCreateInfo->imageExtent);
 
 	// TODO: set additional CAMetalLayer properties before extracting drawables:
 	//	- presentsWithTransaction
@@ -341,15 +357,29 @@ void MVKSwapchain::initCAMetalLayer(const VkSwapchainCreateInfoKHR* pCreateInfo,
 // The CAMetalLayer should already be initialized when this is called.
 void MVKSwapchain::initSurfaceImages(const VkSwapchainCreateInfoKHR* pCreateInfo, uint32_t imgCnt) {
 
+    if ( _device->getConfigurationResult() != VK_SUCCESS ) { return; }
     if ( getIsSurfaceLost() ) { return; }
 
-    VkExtent2D imgExtent = mvkVkExtent2DFromCGSize(_mtlLayerOrigDrawSize);
+	VkImageFormatListCreateInfo fmtListInfo;
+	for (const auto* next = (const VkBaseInStructure*)pCreateInfo->pNext; next; next = next->pNext) {
+		switch (next->sType) {
+			case VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO: {
+				fmtListInfo = *(VkImageFormatListCreateInfo*)next;
+				fmtListInfo.pNext = VK_NULL_HANDLE;		// Terminate the new chain
+				break;
+			}
+			default:
+				break;
+		}
+	}
+
+    VkExtent2D imgExtent = pCreateInfo->imageExtent;
 
     VkImageCreateInfo imgInfo = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = VK_NULL_HANDLE,
         .imageType = VK_IMAGE_TYPE_2D,
-        .format = getPixelFormats()->getVkFormatFromMTLPixelFormat(_mtlLayer.pixelFormat),
+        .format = getPixelFormats()->getVkFormat(_mtlLayer.pixelFormat),
         .extent = { imgExtent.width, imgExtent.height, 1 },
         .mipLevels = 1,
         .arrayLayers = 1,
@@ -361,6 +391,7 @@ void MVKSwapchain::initSurfaceImages(const VkSwapchainCreateInfoKHR* pCreateInfo
 
 	if (mvkAreAllFlagsEnabled(pCreateInfo->flags, VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)) {
 		mvkEnableFlags(imgInfo.flags, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT);
+		imgInfo.pNext = &fmtListInfo;
 	}
 	if (mvkAreAllFlagsEnabled(pCreateInfo->flags, VK_SWAPCHAIN_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT_KHR)) {
 		// We don't really support this, but set the flag anyway.
@@ -372,6 +403,65 @@ void MVKSwapchain::initSurfaceImages(const VkSwapchainCreateInfoKHR* pCreateInfo
 	}
 
     MVKLogInfo("Created %d swapchain images with initial size (%d, %d).", imgCnt, imgExtent.width, imgExtent.height);
+}
+
+VkResult MVKSwapchain::getRefreshCycleDuration(VkRefreshCycleDurationGOOGLE *pRefreshCycleDuration) {
+	if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
+
+	NSInteger framesPerSecond = 60;
+#if MVK_IOS_OR_TVOS
+	UIScreen* screen = [UIScreen mainScreen];
+	if ([screen respondsToSelector: @selector(maximumFramesPerSecond)]) {
+		framesPerSecond = screen.maximumFramesPerSecond;
+	}
+#endif
+#if MVK_MACOS
+	// TODO: hook this up for macOS, probably need to use CGDisplayModeGetRefeshRate
+#endif
+
+	pRefreshCycleDuration->refreshDuration = (uint64_t)1e9 / framesPerSecond;
+	return VK_SUCCESS;
+}
+
+VkResult MVKSwapchain::getPastPresentationTiming(uint32_t *pCount, VkPastPresentationTimingGOOGLE *pPresentationTimings) {
+	if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
+
+	std::lock_guard<std::mutex> lock(_presentHistoryLock);
+	if (pCount && pPresentationTimings == nullptr) {
+		*pCount = _presentHistoryCount;
+	} else if (pPresentationTimings) {
+		uint32_t index = _presentHistoryHeadIndex;
+		uint32_t countRemaining = std::min(_presentHistoryCount, *pCount);
+		uint32_t outIndex = 0;
+		while (countRemaining > 0) {
+			pPresentationTimings[outIndex] = _presentTimingHistory[index];
+			countRemaining--;
+			index = (index + 1) % kMaxPresentationHistory;
+			outIndex++;
+		}
+	}
+	return VK_SUCCESS;
+}
+
+void MVKSwapchain::recordPresentTime(MVKPresentTimingInfo presentTimingInfo, uint64_t actualPresentTime) {
+	std::lock_guard<std::mutex> lock(_presentHistoryLock);
+	if (_presentHistoryCount < kMaxPresentationHistory) {
+		_presentHistoryCount++;
+		_presentHistoryHeadIndex = 0;
+	} else {
+		_presentHistoryHeadIndex = (_presentHistoryHeadIndex + 1) % kMaxPresentationHistory;
+	}
+
+	// If actual time not supplied, use desired time instead
+	if (actualPresentTime == 0) { actualPresentTime = presentTimingInfo.desiredPresentTime; }
+
+	_presentTimingHistory[_presentHistoryIndex].presentID = presentTimingInfo.presentID;
+	_presentTimingHistory[_presentHistoryIndex].desiredPresentTime = presentTimingInfo.desiredPresentTime;
+	_presentTimingHistory[_presentHistoryIndex].actualPresentTime = actualPresentTime;
+	// These details are not available in Metal
+	_presentTimingHistory[_presentHistoryIndex].earliestPresentTime = actualPresentTime;
+	_presentTimingHistory[_presentHistoryIndex].presentMargin = 0;
+	_presentHistoryIndex = (_presentHistoryIndex + 1) % kMaxPresentationHistory;
 }
 
 MVKSwapchain::~MVKSwapchain() {

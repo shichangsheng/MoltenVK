@@ -1,7 +1,7 @@
 /*
  * vk_mvk_moltenvk.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,21 +49,23 @@ VkResult mvkCopy(S* pDst, const S* pSrc, size_t* pCopySize) {
 }
 
 MVK_PUBLIC_SYMBOL VkResult vkGetMoltenVKConfigurationMVK(
-	VkInstance                                  instance,
+	VkInstance                                  ignored,
 	MVKConfiguration*                           pConfiguration,
 	size_t*                                     pConfigurationSize) {
 
-	MVKInstance* mvkInst = MVKInstance::getMVKInstance(instance);
-	return mvkCopy(pConfiguration, mvkInst->getMoltenVKConfiguration(), pConfigurationSize);
+	return mvkCopy(pConfiguration, mvkGetMVKConfiguration(), pConfigurationSize);
 }
 
 MVK_PUBLIC_SYMBOL VkResult vkSetMoltenVKConfigurationMVK(
-	VkInstance                                  instance,
+	VkInstance                                  ignored,
 	const MVKConfiguration*                     pConfiguration,
 	size_t*                                     pConfigurationSize) {
 
-	MVKInstance* mvkInst = MVKInstance::getMVKInstance(instance);
-	return mvkCopy((MVKConfiguration*)mvkInst->getMoltenVKConfiguration(), pConfiguration, pConfigurationSize);
+	// Start with current config, in case incoming is not fully copied
+	MVKConfiguration mvkConfig = *mvkGetMVKConfiguration();
+	VkResult rslt = mvkCopy(&mvkConfig, pConfiguration, pConfigurationSize);
+	mvkSetMVKConfiguration(&mvkConfig);
+	return rslt;
 }
 
 MVK_PUBLIC_SYMBOL VkResult vkGetPhysicalDeviceMetalFeaturesMVK(
@@ -97,7 +99,7 @@ MVK_PUBLIC_SYMBOL void vkGetVersionStringsMVK(
 	len = mvkVer.copy(pMoltenVersionStringBuffer, moltenVersionStringBufferLength - 1);
 	pMoltenVersionStringBuffer[len] = 0;    // terminator
 
-	string vkVer = mvkGetVulkanVersionString(MVK_VULKAN_API_VERSION);
+	string vkVer = mvkGetVulkanVersionString(mvkGetMVKConfiguration()->apiVersionToAdvertise);
 	len = vkVer.copy(pVulkanVersionStringBuffer, vulkanVersionStringBufferLength - 1);
 	pVulkanVersionStringBuffer[len] = 0;    // terminator
 }
@@ -115,7 +117,7 @@ MVK_PUBLIC_SYMBOL VkResult vkSetMTLTextureMVK(
     id<MTLTexture>                              mtlTexture) {
 
     MVKImage* mvkImg = (MVKImage*)image;
-    return mvkImg->setMTLTexture(mtlTexture);
+    return mvkImg->setMTLTexture(0, mtlTexture);
 }
 
 MVK_PUBLIC_SYMBOL void vkGetMTLTextureMVK(
@@ -123,7 +125,7 @@ MVK_PUBLIC_SYMBOL void vkGetMTLTextureMVK(
     id<MTLTexture>*                             pMTLTexture) {
 
     MVKImage* mvkImg = (MVKImage*)image;
-    *pMTLTexture = mvkImg->getMTLTexture();
+    *pMTLTexture = mvkImg->getMTLTexture(0);
 }
 
 MVK_PUBLIC_SYMBOL void vkGetMTLBufferMVK(

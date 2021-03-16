@@ -1,7 +1,7 @@
 /*
  * MVKDescriptorSet.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@
 #pragma once
 
 #include "MVKDescriptor.h"
+#include "MVKSmallVector.h"
+#include "MVKBitArray.h"
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
@@ -43,16 +45,15 @@ public:
 	VkDebugReportObjectTypeEXT getVkDebugReportObjectType() override { return VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT_EXT; }
 
 	/** Encodes this descriptor set layout and the specified descriptor set on the specified command encoder. */
-    void bindDescriptorSet(MVKCommandEncoder* cmdEncoder,
-                           MVKDescriptorSet* descSet,
-                           MVKShaderResourceBinding& dslMTLRezIdxOffsets,
-                           MVKVector<uint32_t>& dynamicOffsets,
-                           uint32_t* pDynamicOffsetIndex);
-
+	void bindDescriptorSet(MVKCommandEncoder* cmdEncoder,
+						   MVKDescriptorSet* descSet,
+						   MVKShaderResourceBinding& dslMTLRezIdxOffsets,
+						   MVKArrayRef<uint32_t> dynamicOffsets,
+						   uint32_t& dynamicOffsetIndex);
 
 	/** Encodes this descriptor set layout and the specified descriptor updates on the specified command encoder immediately. */
 	void pushDescriptorSet(MVKCommandEncoder* cmdEncoder,
-						   MVKVector<VkWriteDescriptorSet>& descriptorWrites,
+						   MVKArrayRef<VkWriteDescriptorSet>& descriptorWrites,
 						   MVKShaderResourceBinding& dslMTLRezIdxOffsets);
 
 
@@ -80,13 +81,15 @@ protected:
 	friend class MVKDescriptorSet;
 	friend class MVKDescriptorPool;
 
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 	inline uint32_t getDescriptorCount() { return _descriptorCount; }
-	uint32_t getDescriptorIndex(uint32_t binding, uint32_t elementIndex);
+	inline uint32_t getDescriptorIndex(uint32_t binding, uint32_t elementIndex = 0) { return _bindingToDescriptorIndex[binding] + elementIndex; }
 	inline MVKDescriptorSetLayoutBinding* getBinding(uint32_t binding) { return &_bindings[_bindingToIndex[binding]]; }
+	const VkDescriptorBindingFlags* getBindingFlags(const VkDescriptorSetLayoutCreateInfo* pCreateInfo);
 
-	std::vector<MVKDescriptorSetLayoutBinding> _bindings;
+	MVKSmallVector<MVKDescriptorSetLayoutBinding> _bindings;
 	std::unordered_map<uint32_t, uint32_t> _bindingToIndex;
+	std::unordered_map<uint32_t, uint32_t> _bindingToDescriptorIndex;
 	MVKShaderResourceBinding _mtlResourceCounts;
 	uint32_t _descriptorCount;
 	bool _isPushDescriptorLayout;
@@ -124,85 +127,46 @@ public:
 			  VkBufferView* pTexelBufferView,
 			  VkWriteDescriptorSetInlineUniformBlockEXT* pInlineUniformBlock);
 
-	MVKDescriptorSet(MVKDescriptorSetLayout* layout, MVKDescriptorPool* pool);
-
-	~MVKDescriptorSet() override;
+	MVKDescriptorSet(MVKDescriptorPool* pool);
 
 protected:
 	friend class MVKDescriptorSetLayoutBinding;
 	friend class MVKDescriptorPool;
 
-	void propogateDebugName() override {}
-	inline MVKDescriptor* getDescriptor(uint32_t index) { return _descriptors[index]; }
+	void propagateDebugName() override {}
+	MVKDescriptor* getDescriptor(uint32_t binding, uint32_t elementIndex = 0);
+	VkResult allocate(MVKDescriptorSetLayout* layout, uint32_t variableDescriptorCount);
+	void free(bool isPoolReset);
 
 	MVKDescriptorSetLayout* _layout;
 	MVKDescriptorPool* _pool;
-	std::vector<MVKDescriptor*> _descriptors;
+	MVKSmallVector<MVKDescriptor*> _descriptors;
+	uint32_t _variableDescriptorCount;
 };
 
 
 #pragma mark -
-#pragma mark MVKDescriptorTypePreallocation
+#pragma mark MVKDescriptorTypePool
 
-/** Support class for MVKDescriptorPool that holds preallocated instances of a single concrete descriptor class. */
+/** Support class for MVKDescriptorPool that holds a pool of instances of a single concrete descriptor class. */
 template<class DescriptorClass>
-class MVKDescriptorTypePreallocation : public MVKBaseObject {
+class MVKDescriptorTypePool : public MVKBaseObject {
 
 public:
 
-	/** Returns the Vulkan API opaque object controlling this object. */
 	MVKVulkanAPIObject* getVulkanAPIObject() override { return nullptr; };
 
-	MVKDescriptorTypePreallocation(const VkDescriptorPoolCreateInfo* pCreateInfo,
-								   VkDescriptorType descriptorType);
-
-protected:
-	friend class MVKPreallocatedDescriptors;
-
-	VkResult allocateDescriptor(MVKDescriptor** pMVKDesc);
-	bool findDescriptor(uint32_t endIndex, MVKDescriptor** pMVKDesc);
-	void freeDescriptor(MVKDescriptor* mvkDesc);
-	void reset();
-
-	std::vector<DescriptorClass> _descriptors;
-	std::vector<bool> _availability;
-	uint32_t _nextAvailableIndex;
-	bool _supportAvailability;
-};
-
-
-#pragma mark -
-#pragma mark MVKPreallocatedDescriptors
-
-/** Support class for MVKDescriptorPool that holds preallocated instances of all concrete descriptor classes. */
-class MVKPreallocatedDescriptors : public MVKBaseObject {
-
-public:
-
-	/** Returns the Vulkan API opaque object controlling this object. */
-	MVKVulkanAPIObject* getVulkanAPIObject() override { return nullptr; };
-
-	MVKPreallocatedDescriptors(const VkDescriptorPoolCreateInfo* pCreateInfo);
+	MVKDescriptorTypePool(size_t poolSize);
 
 protected:
 	friend class MVKDescriptorPool;
 
-	VkResult allocateDescriptor(VkDescriptorType descriptorType, MVKDescriptor** pMVKDesc);
-	void freeDescriptor(MVKDescriptor* mvkDesc);
+	VkResult allocateDescriptor(MVKDescriptor** pMVKDesc, MVKDescriptorPool* pool);
+	void freeDescriptor(MVKDescriptor* mvkDesc, MVKDescriptorPool* pool);
 	void reset();
 
-	MVKDescriptorTypePreallocation<MVKUniformBufferDescriptor> _uniformBufferDescriptors;
-	MVKDescriptorTypePreallocation<MVKStorageBufferDescriptor> _storageBufferDescriptors;
-	MVKDescriptorTypePreallocation<MVKUniformBufferDynamicDescriptor> _uniformBufferDynamicDescriptors;
-	MVKDescriptorTypePreallocation<MVKStorageBufferDynamicDescriptor> _storageBufferDynamicDescriptors;
-	MVKDescriptorTypePreallocation<MVKInlineUniformBlockDescriptor> _inlineUniformBlockDescriptors;
-	MVKDescriptorTypePreallocation<MVKSampledImageDescriptor> _sampledImageDescriptors;
-	MVKDescriptorTypePreallocation<MVKStorageImageDescriptor> _storageImageDescriptors;
-	MVKDescriptorTypePreallocation<MVKInputAttachmentDescriptor> _inputAttachmentDescriptors;
-	MVKDescriptorTypePreallocation<MVKSamplerDescriptor> _samplerDescriptors;
-	MVKDescriptorTypePreallocation<MVKCombinedImageSamplerDescriptor> _combinedImageSamplerDescriptors;
-	MVKDescriptorTypePreallocation<MVKUniformTexelBufferDescriptor> _uniformTexelBufferDescriptors;
-	MVKDescriptorTypePreallocation<MVKStorageTexelBufferDescriptor> _storageTexelBufferDescriptors;
+	MVKSmallVector<DescriptorClass> _descriptors;
+	MVKBitArray _availability;
 };
 
 
@@ -220,33 +184,47 @@ public:
 	/** Returns the debug report object type of this object. */
 	VkDebugReportObjectTypeEXT getVkDebugReportObjectType() override { return VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_POOL_EXT; }
 
-	/** Allocates the specified number of descriptor sets. */
-	VkResult allocateDescriptorSets(uint32_t count,
-									const VkDescriptorSetLayout* pSetLayouts,
+	/** Allocates descriptor sets. */
+	VkResult allocateDescriptorSets(const VkDescriptorSetAllocateInfo* pAllocateInfo,
 									VkDescriptorSet* pDescriptorSets);
 
 	/** Free's up the specified descriptor set. */
 	VkResult freeDescriptorSets(uint32_t count, const VkDescriptorSet* pDescriptorSets);
 
-	/** Destoys all currently allocated descriptor sets. */
+	/** Destroys all currently allocated descriptor sets. */
 	VkResult reset(VkDescriptorPoolResetFlags flags);
 
-	MVKDescriptorPool(MVKDevice* device, const VkDescriptorPoolCreateInfo* pCreateInfo);
+	MVKDescriptorPool(MVKDevice* device, const VkDescriptorPoolCreateInfo* pCreateInfo, bool poolDescriptors);
 
 	~MVKDescriptorPool() override;
 
 protected:
 	friend class MVKDescriptorSet;
+	template<class> friend class MVKDescriptorTypePool;
 
-	void propogateDebugName() override {}
-	VkResult allocateDescriptorSet(MVKDescriptorSetLayout* mvkDSL, VkDescriptorSet* pVKDS);
-	void freeDescriptorSet(MVKDescriptorSet* mvkDS);
+	void propagateDebugName() override {}
+	const uint32_t* getVariableDecriptorCounts(const VkDescriptorSetAllocateInfo* pAllocateInfo);
+	VkResult allocateDescriptorSet(MVKDescriptorSetLayout* mvkDSL, uint32_t variableDescriptorCount, VkDescriptorSet* pVKDS);
+	void freeDescriptorSet(MVKDescriptorSet* mvkDS, bool isPoolReset);
 	VkResult allocateDescriptor(VkDescriptorType descriptorType, MVKDescriptor** pMVKDesc);
 	void freeDescriptor(MVKDescriptor* mvkDesc);
 
-	uint32_t _maxSets;
-	std::unordered_set<MVKDescriptorSet*> _allocatedSets;
-	MVKPreallocatedDescriptors* _preallocatedDescriptors;
+	MVKSmallVector<MVKDescriptorSet> _descriptorSets;
+	MVKBitArray _descriptorSetAvailablility;
+
+	MVKDescriptorTypePool<MVKUniformBufferDescriptor> _uniformBufferDescriptors;
+	MVKDescriptorTypePool<MVKStorageBufferDescriptor> _storageBufferDescriptors;
+	MVKDescriptorTypePool<MVKUniformBufferDynamicDescriptor> _uniformBufferDynamicDescriptors;
+	MVKDescriptorTypePool<MVKStorageBufferDynamicDescriptor> _storageBufferDynamicDescriptors;
+	MVKDescriptorTypePool<MVKInlineUniformBlockDescriptor> _inlineUniformBlockDescriptors;
+	MVKDescriptorTypePool<MVKSampledImageDescriptor> _sampledImageDescriptors;
+	MVKDescriptorTypePool<MVKStorageImageDescriptor> _storageImageDescriptors;
+	MVKDescriptorTypePool<MVKInputAttachmentDescriptor> _inputAttachmentDescriptors;
+	MVKDescriptorTypePool<MVKSamplerDescriptor> _samplerDescriptors;
+	MVKDescriptorTypePool<MVKCombinedImageSamplerDescriptor> _combinedImageSamplerDescriptors;
+	MVKDescriptorTypePool<MVKUniformTexelBufferDescriptor> _uniformTexelBufferDescriptors;
+	MVKDescriptorTypePool<MVKStorageTexelBufferDescriptor> _storageTexelBufferDescriptors;
+	bool _hasPooledDescriptors;
 };
 
 
@@ -280,10 +258,10 @@ public:
 	~MVKDescriptorUpdateTemplate() override = default;
 
 protected:
-	void propogateDebugName() override {}
+	void propagateDebugName() override {}
 
 	VkDescriptorUpdateTemplateTypeKHR _type;
-	MVKVectorInline<VkDescriptorUpdateTemplateEntryKHR, 1> _entries;
+	MVKSmallVector<VkDescriptorUpdateTemplateEntryKHR, 1> _entries;
 };
 
 #pragma mark -
@@ -309,4 +287,5 @@ void mvkPopulateShaderConverterContext(mvk::SPIRVToMSLConversionConfiguration& c
 									   spv::ExecutionModel stage,
 									   uint32_t descriptorSetIndex,
 									   uint32_t bindingIndex,
+									   uint32_t count,
 									   MVKSampler* immutableSampler);

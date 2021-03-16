@@ -1,7 +1,7 @@
 /*
  * MVKSwapchain.h
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 #include "MVKDevice.h"
 #include "MVKImage.h"
-#include "MVKVector.h"
+#include "MVKSmallVector.h"
 
 #import "CAMetalLayer+MoltenVK.h"
 #import <Metal/Metal.h>
@@ -77,20 +77,26 @@ public:
 
 	/** Returns whether the surface size has changed since the last time this function was called. */
 	inline bool getHasSurfaceSizeChanged() {
-		return !CGSizeEqualToSize(_mtlLayer.naturalDrawableSizeMVK, _mtlLayerOrigDrawSize);
+		return !CGSizeEqualToSize(_mtlLayer.naturalDrawableSizeMVK, _mtlLayer.drawableSize);
 	}
 
 	/** Returns the status of the surface. Surface loss takes precedence over out-of-date errors. */
 	inline VkResult getSurfaceStatus() {
+		if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
 		if (getIsSurfaceLost()) { return VK_ERROR_SURFACE_LOST_KHR; }
-		if (getHasSurfaceSizeChanged()) { return VK_ERROR_OUT_OF_DATE_KHR; }
+		if (getHasSurfaceSizeChanged()) { return VK_SUBOPTIMAL_KHR; }
 		return VK_SUCCESS;
 	}
 
 	/** Adds HDR metadata to this swapchain. */
 	void setHDRMetadataEXT(const VkHdrMetadataEXT& metadata);
-
-
+	
+	/** VK_GOOGLE_display_timing - returns the duration of the refresh cycle */
+	VkResult getRefreshCycleDuration(VkRefreshCycleDurationGOOGLE *pRefreshCycleDuration);
+	
+	/** VK_GOOGLE_display_timing - returns past presentation times */
+	VkResult getPastPresentationTiming(uint32_t *pCount, VkPastPresentationTimingGOOGLE *pPresentationTimings);
+	
 #pragma mark Construction
 	
 	MVKSwapchain(MVKDevice* device, const VkSwapchainCreateInfoKHR* pCreateInfo);
@@ -100,7 +106,7 @@ public:
 protected:
 	friend class MVKPresentableSwapchainImage;
 
-	void propogateDebugName() override;
+	void propagateDebugName() override;
 	void initCAMetalLayer(const VkSwapchainCreateInfoKHR* pCreateInfo, uint32_t imgCnt);
 	void initSurfaceImages(const VkSwapchainCreateInfoKHR* pCreateInfo, uint32_t imgCnt);
 	void releaseUndisplayedSurfaces();
@@ -108,15 +114,21 @@ protected:
     void willPresentSurface(id<MTLTexture> mtlTexture, id<MTLCommandBuffer> mtlCmdBuff);
     void renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffer> mtlCmdBuff);
     void markFrameInterval();
+	void recordPresentTime(MVKPresentTimingInfo presentTimingInfo, uint64_t actualPresentTime = 0);
 
 	CAMetalLayer* _mtlLayer;
     MVKWatermark* _licenseWatermark;
-	MVKVectorInline<MVKPresentableSwapchainImage*, kMVKMaxSwapchainImageCount> _presentableImages;
+	MVKSmallVector<MVKPresentableSwapchainImage*, kMVKMaxSwapchainImageCount> _presentableImages;
 	std::atomic<uint64_t> _currentAcquisitionID;
-    CGSize _mtlLayerOrigDrawSize;
     uint64_t _lastFrameTime;
     uint32_t _currentPerfLogFrameCount;
     std::atomic<bool> _surfaceLost;
     MVKBlockObserver* _layerObserver;
+	static const int kMaxPresentationHistory = 60;
+	VkPastPresentationTimingGOOGLE _presentTimingHistory[kMaxPresentationHistory];
+	uint32_t _presentHistoryCount;
+	uint32_t _presentHistoryIndex;
+	uint32_t _presentHistoryHeadIndex;
+	std::mutex _presentHistoryLock;
 };
 

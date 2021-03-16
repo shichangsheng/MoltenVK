@@ -1,7 +1,7 @@
 /*
  * MVKExtensions.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@
 #include "MVKFoundation.h"
 #include "MVKOSExtensions.h"
 #include "MVKEnvironment.h"
-#include "vk_mvk_moltenvk.h"
 #include <vulkan/vulkan_ios.h>
 #include <vulkan/vulkan_macos.h>
 
@@ -46,58 +45,54 @@ static VkExtensionProperties kVkExtProps_ ##EXT = mvkMakeExtProps(VK_ ##EXT ##_E
 
 // Returns whether the specified properties are valid for this platform
 static bool mvkIsSupportedOnPlatform(VkExtensionProperties* pProperties) {
-#if MVK_MACOS
-	if (pProperties == &kVkExtProps_EXT_HDR_METADATA) {
-		return mvkOSVersionIsAtLeast(10.15);
+#define MVK_NA  kMVKOSVersionUnsupported
+#define MVK_EXTENSION_MIN_OS(EXT, MAC, IOS) \
+	if (pProperties == &kVkExtProps_##EXT) { return mvkOSVersionIsAtLeast(MAC, IOS); }
+
+	// If the config indicates that not all supported extensions should be advertised,
+	// only advertise those supported extensions that have been specifically configured.
+	auto advExtns = mvkGetMVKConfiguration()->advertiseExtensions;
+	if ( !mvkIsAnyFlagEnabled(advExtns, MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL) ) {
+		if (mvkIsAnyFlagEnabled(advExtns, MVK_CONFIG_ADVERTISE_EXTENSIONS_MOLTENVK)) {
+			MVK_EXTENSION_MIN_OS(MVK_MOLTENVK,                         10.11,  8.0)
+		}
+		if (mvkIsAnyFlagEnabled(advExtns, MVK_CONFIG_ADVERTISE_EXTENSIONS_WSI)) {
+			MVK_EXTENSION_MIN_OS(EXT_METAL_SURFACE,                    10.11,  8.0)
+			MVK_EXTENSION_MIN_OS(MVK_IOS_SURFACE,                      MVK_NA, 8.0)
+			MVK_EXTENSION_MIN_OS(MVK_MACOS_SURFACE,                    10.11,  MVK_NA)
+			MVK_EXTENSION_MIN_OS(KHR_SURFACE,                          10.11,  8.0)
+			MVK_EXTENSION_MIN_OS(KHR_SWAPCHAIN,                        10.11,  8.0)
+		}
+		if (mvkIsAnyFlagEnabled(advExtns, MVK_CONFIG_ADVERTISE_EXTENSIONS_PORTABILITY)) {
+			MVK_EXTENSION_MIN_OS(KHR_PORTABILITY_SUBSET,               10.11,  8.0)
+			MVK_EXTENSION_MIN_OS(KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2, 10.11,  8.0)
+		}
+
+		return false;
 	}
-	if (pProperties == &kVkExtProps_EXT_FRAGMENT_SHADER_INTERLOCK) {
-		return mvkOSVersionIsAtLeast(10.13);
-	}
-	if (pProperties == &kVkExtProps_EXT_MEMORY_BUDGET) {
-		return mvkOSVersionIsAtLeast(10.13);
-	}
-	if (pProperties == &kVkExtProps_EXT_POST_DEPTH_COVERAGE) { return false; }
-	if (pProperties == &kVkExtProps_EXT_SHADER_STENCIL_EXPORT) {
-		return mvkOSVersionIsAtLeast(10.14);
-	}
-	if (pProperties == &kVkExtProps_EXT_TEXEL_BUFFER_ALIGNMENT) {
-		return mvkOSVersionIsAtLeast(10.13);
-	}
-	if (pProperties == &kVkExtProps_MVK_IOS_SURFACE) { return false; }
-	if (pProperties == &kVkExtProps_AMD_SHADER_IMAGE_LOAD_STORE_LOD) { return false; }
-	if (pProperties == &kVkExtProps_AMD_SHADER_TRINARY_MINMAX) {
-		return mvkOSVersionIsAtLeast(10.14);
-	}
-	if (pProperties == &kVkExtProps_IMG_FORMAT_PVRTC) { return false; }
-#endif
-#if MVK_IOS
-	if (pProperties == &kVkExtProps_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE) { return false; }
-	if (pProperties == &kVkExtProps_EXT_HDR_METADATA) { return false; }
-	if (pProperties == &kVkExtProps_EXT_FRAGMENT_SHADER_INTERLOCK) {
-		return mvkOSVersionIsAtLeast(11.0);
-	}
-	if (pProperties == &kVkExtProps_EXT_MEMORY_BUDGET) {
-		return mvkOSVersionIsAtLeast(11.0);
-	}
-	if (pProperties == &kVkExtProps_EXT_POST_DEPTH_COVERAGE) {
-		return mvkOSVersionIsAtLeast(11.0);
-	}
-	if (pProperties == &kVkExtProps_EXT_SHADER_STENCIL_EXPORT) {
-		return mvkOSVersionIsAtLeast(12.0);
-	}
-	if (pProperties == &kVkExtProps_EXT_SWAPCHAIN_COLOR_SPACE) {
-		return mvkOSVersionIsAtLeast(9.0);
-	}
-	if (pProperties == &kVkExtProps_EXT_TEXEL_BUFFER_ALIGNMENT) {
-		return mvkOSVersionIsAtLeast(11.0);
-	}
-	if (pProperties == &kVkExtProps_MVK_MACOS_SURFACE) { return false; }
-	if (pProperties == &kVkExtProps_AMD_SHADER_TRINARY_MINMAX) {
-		return mvkOSVersionIsAtLeast(12.0);
-	}
-#endif
+
+	MVK_EXTENSION_MIN_OS(MVK_IOS_SURFACE,                    MVK_NA, 8.0)
+	MVK_EXTENSION_MIN_OS(MVK_MACOS_SURFACE,                  10.11,  MVK_NA)
+
+	MVK_EXTENSION_MIN_OS(EXT_HDR_METADATA,                   10.15,  MVK_NA)
+	MVK_EXTENSION_MIN_OS(AMD_SHADER_IMAGE_LOAD_STORE_LOD,    10.16,  8.0)
+	MVK_EXTENSION_MIN_OS(IMG_FORMAT_PVRTC,                   10.16,  8.0)
+	MVK_EXTENSION_MIN_OS(KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE,   10.11,  14.0)
+	MVK_EXTENSION_MIN_OS(EXT_SWAPCHAIN_COLOR_SPACE,          10.11,  9.0)
+	MVK_EXTENSION_MIN_OS(KHR_SHADER_SUBGROUP_EXTENDED_TYPES, 10.14,  13.0)
+	MVK_EXTENSION_MIN_OS(EXT_FRAGMENT_SHADER_INTERLOCK,      10.13,  11.0)
+	MVK_EXTENSION_MIN_OS(EXT_MEMORY_BUDGET,                  10.13,  11.0)
+	MVK_EXTENSION_MIN_OS(EXT_POST_DEPTH_COVERAGE,            10.16,  11.0)
+	MVK_EXTENSION_MIN_OS(EXT_SHADER_STENCIL_EXPORT,          10.14,  12.0)
+	MVK_EXTENSION_MIN_OS(EXT_SUBGROUP_SIZE_CONTROL,          10.14,  13.0)
+	MVK_EXTENSION_MIN_OS(EXT_TEXEL_BUFFER_ALIGNMENT,         10.13,  11.0)
+	MVK_EXTENSION_MIN_OS(EXT_TEXTURE_COMPRESSION_ASTC_HDR,   10.16,  13.0)
+	MVK_EXTENSION_MIN_OS(AMD_SHADER_TRINARY_MINMAX,          10.14,  12.0)
 
 	return true;
+
+#undef MVK_NA
+#undef MVK_EXTENSION_MIN_OS
 }
 
 // Disable by default unless asked to enable for platform and the extension is valid for this platform
@@ -127,17 +122,19 @@ void MVKExtensionList::initCount() {
 #include "MVKExtensions.def"
 }
 
+#define MVK_ENSURE_EXTENSION_TYPE(var, EXT, type) vk_ ##var.enabled = vk_ ##var.enabled && MVK_EXTENSION_ ##type;
+
 void MVKExtensionList::disableAllButEnabledInstanceExtensions() {
-#define MVK_EXTENSION_INSTANCE	true
-#define MVK_EXTENSION_DEVICE	false
-#define MVK_EXTENSION(var, EXT, type) vk_ ##var.enabled = type && vk_ ##var.enabled;
+#define MVK_EXTENSION_INSTANCE         true
+#define MVK_EXTENSION_DEVICE           false
+#define MVK_EXTENSION(var, EXT, type)  MVK_ENSURE_EXTENSION_TYPE(var, EXT, type)
 #include "MVKExtensions.def"
 }
 
 void MVKExtensionList::disableAllButEnabledDeviceExtensions() {
-#define MVK_EXTENSION_INSTANCE	false
-#define MVK_EXTENSION_DEVICE	true
-#define MVK_EXTENSION(var, EXT, type) vk_ ##var.enabled = type && vk_ ##var.enabled;
+#define MVK_EXTENSION_INSTANCE         false
+#define MVK_EXTENSION_DEVICE           true
+#define MVK_EXTENSION(var, EXT, type)  MVK_ENSURE_EXTENSION_TYPE(var, EXT, type)
 #include "MVKExtensions.def"
 }
 

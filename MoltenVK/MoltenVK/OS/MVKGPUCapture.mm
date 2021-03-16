@@ -1,7 +1,7 @@
 /*
  * MVKGPUCapture.mm
  *
- * Copyright (c) 2015-2020 The Brenwill Workshop Ltd. (http://www.brenwill.com)
+ * Copyright (c) 2015-2021 The Brenwill Workshop Ltd. (http://www.brenwill.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 #if MVK_MACOS
 static MVKOSVersion kMinOSVersionMTLCaptureScope = 10.13;
 #endif
-#if MVK_IOS
+#if MVK_IOS_OR_TVOS
 static MVKOSVersion kMinOSVersionMTLCaptureScope = 11.0;
 #endif
 
@@ -36,7 +36,9 @@ void MVKGPUCaptureScope::beginScope() {
 	if (_mtlCaptureScope) {
 		[_mtlCaptureScope beginScope];
 	} else if (_isDefault && _isFirstBoundary) {
+#if !MVK_MACCAT
 		[_mtlQueue insertDebugCaptureBoundary];
+#endif
 	}
 	_isFirstBoundary  = false;
 }
@@ -45,7 +47,9 @@ void MVKGPUCaptureScope::endScope() {
 	if (_mtlCaptureScope) {
 		[_mtlCaptureScope endScope];
 	} else if (_isDefault) {
+#if !MVK_MACCAT
 		[_mtlQueue insertDebugCaptureBoundary];
+#endif
 	}
 }
 
@@ -56,13 +60,19 @@ void MVKGPUCaptureScope::makeDefault() {
 	}
 }
 
-MVKGPUCaptureScope::MVKGPUCaptureScope(MVKQueue* mvkQueue, const char* purpose) : _queue(mvkQueue) {
-	_mtlQueue = [_queue->getMTLCommandQueue() retain];	// retained
+MVKGPUCaptureScope::MVKGPUCaptureScope(MVKQueue* mvkQueue) {
+	_mtlQueue = [mvkQueue->getMTLCommandQueue() retain];	// retained
 	if (mvkOSVersionIsAtLeast(kMinOSVersionMTLCaptureScope)) {
-		NSString* nsQLbl = [[NSString alloc] initWithUTF8String: (_queue->getName() + "-" + purpose).c_str()];		// temp retained
 		_mtlCaptureScope = [[MTLCaptureManager sharedCaptureManager] newCaptureScopeWithCommandQueue: _mtlQueue];	// retained
-		_mtlCaptureScope.label = nsQLbl;
-		[nsQLbl release];																							// release temp
+		_mtlCaptureScope.label = @(mvkQueue->getName().c_str());
+		// Due to a retain bug in Metal when the capture layer is installed, capture scopes
+		// can have too many references on them. Release the excess references so the scope--
+		// and the command queue--aren't leaked. This is a horrible kludge that depends on
+		// Apple not taking internal references to capture scopes, but without it, we could
+		// get hung up waiting for a new queue, because the old queues are still outstanding.
+		while (_mtlCaptureScope.retainCount > 1) {
+			[_mtlCaptureScope release];
+		}
 	}
 }
 
