@@ -76,10 +76,10 @@
 #pragma mark Global Configuration
 
 /** Global function to access MoltenVK configuration info. */
-const MVKConfiguration* mvkGetMVKConfiguration();
+const MVKConfiguration& mvkConfig();
 
 /** Global function to update MoltenVK configuration info. */
-void mvkSetMVKConfiguration(MVKConfiguration* pMVKConfig);
+void mvkSetConfig(const MVKConfiguration& mvkConfig);
 
 /** Flip the vertex coordinate in shaders. Enabled by default. */
 #ifndef MVK_CONFIG_SHADER_CONVERSION_FLIP_VERTEX_Y
@@ -271,4 +271,14 @@ void mvkSetMVKConfiguration(MVKConfiguration* pMVKConfig);
 /** Advertise supported extensions. Defaults to all. */
 #ifndef MVK_CONFIG_ADVERTISE_EXTENSIONS
 #  	define MVK_CONFIG_ADVERTISE_EXTENSIONS    MVK_CONFIG_ADVERTISE_EXTENSIONS_ALL
+#endif
+
+/** Resume MVKDevice VK_ERROR_DEVICE_LOST errors that do not cause MVKPhysicalDevice errors. Disabled by default. */
+#ifndef MVK_CONFIG_RESUME_LOST_DEVICE
+#   define MVK_CONFIG_RESUME_LOST_DEVICE    0
+#endif
+
+/** Support Metal argument buffers. Disabled by default. */
+#ifndef MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS
+#   define MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS    0
 #endif

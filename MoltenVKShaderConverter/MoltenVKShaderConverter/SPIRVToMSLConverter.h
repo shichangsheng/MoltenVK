@@ -23,7 +23,7 @@
 #include <spirv_msl.hpp>
 #include <string>
 #include <vector>
-#include <unordered_map>
+
 
 namespace mvk {
 
@@ -63,7 +63,7 @@ namespace mvk {
 	/**
 	 * Defines MSL characteristics of a vertex attribute at a particular location.
 	 *
-	 * The isUsedByShader flag is set to true during conversion of SPIR-V to MSL if the shader
+	 * The outIsUsedByShader flag is set to true during conversion of SPIR-V to MSL if the shader
 	 * makes use of this vertex attribute. This allows a pipeline to be optimized, and for two
 	 * shader conversion configurations to be compared only against the attributes that are
 	 * actually used by the shader.
@@ -73,15 +73,16 @@ namespace mvk {
 	 */
 	typedef struct MSLShaderInput {
 		SPIRV_CROSS_NAMESPACE::MSLShaderInput shaderInput;
-
 		uint32_t binding = 0;
-		bool isUsedByShader = false;
+		bool outIsUsedByShader = false;
 
 		/**
 		 * Returns whether the specified vertex attribute match this one.
-		 * It does if all corresponding elements except isUsedByShader are equal.
+		 * It does if all corresponding elements except outIsUsedByShader are equal.
 		 */
 		bool matches(const MSLShaderInput& other) const;
+
+		MSLShaderInput();
 
 	} MSLShaderInput;
 
@@ -89,17 +90,17 @@ namespace mvk {
 	 * Matches the binding index of a MSL resource for a binding within a descriptor set.
 	 * Taken together, the stage, desc_set and binding combine to form a reference to a resource
 	 * descriptor used in a particular shading stage. Generally, only one of the buffer, texture,
-	 * or sampler elements will be populated. The isUsedByShader flag is set to true during
+	 * or sampler elements will be populated. The outIsUsedByShader flag is set to true during
 	 * compilation of SPIR-V to MSL if the shader makes use of this vertex attribute.
 	 *
 	 * If requiresConstExprSampler is true, the resource is a sampler whose content must be
 	 * hardcoded into the MSL as a constexpr type, instead of passed in as a runtime-bound variable.
 	 * The content of that constexpr sampler is defined in the constExprSampler parameter.
 	 *
-	 * The isUsedByShader flag is set to true during conversion of SPIR-V to MSL if the shader
-	 * makes use of this resource binding. This allows a pipeline to be optimized, and for two
-	 * shader conversion configurations to be compared only against the resource bindings that
-	 * are actually used by the shader.
+	 * The outIsUsedByShader value is set by the shader converter based on the content of the SPIR-V
+	 * (and resulting MSL), and is set to true if the shader makes use of this resource binding.
+	 * This allows a pipeline to be optimized, and for two shader conversion configurations to
+	 * be compared only against the resource bindings that are actually used by the shader.
 	 *
 	 * THIS STRUCT IS STREAMED OUT AS PART OF THE PIEPLINE CACHE.
 	 * CHANGES TO THIS STRUCT SHOULD BE CAPTURED IN THE STREAMING LOGIC OF THE PIPELINE CACHE.
@@ -108,16 +109,34 @@ namespace mvk {
 		SPIRV_CROSS_NAMESPACE::MSLResourceBinding resourceBinding;
 		SPIRV_CROSS_NAMESPACE::MSLConstexprSampler constExprSampler;
 		bool requiresConstExprSampler = false;
-
-		bool isUsedByShader = false;
+		bool outIsUsedByShader = false;
 
 		/**
 		 * Returns whether the specified resource binding match this one.
-		 * It does if all corresponding elements except isUsedByShader are equal.
+		 * It does if all corresponding elements except outIsUsedByShader are equal.
 		 */
 		bool matches(const MSLResourceBinding& other) const;
 
+		MSLResourceBinding();
+
 	} MSLResourceBinding;
+
+	/**
+	 * Identifies a descriptor binding, and the index into a buffer that
+	 * can be used for providing dynamic content like dynamic buffer offsets.
+	 *
+	 * THIS STRUCT IS STREAMED OUT AS PART OF THE PIPELINE CACHE.
+	 * CHANGES TO THIS STRUCT SHOULD BE CAPTURED IN THE STREAMING LOGIC OF THE PIPELINE CACHE.
+	 */
+	typedef struct DescriptorBinding {
+		spv::ExecutionModel stage = spv::ExecutionModelMax;
+		uint32_t descriptorSet = 0;
+		uint32_t binding = 0;
+		uint32_t index = 0;
+
+		bool matches(const DescriptorBinding& other) const;
+
+	} DescriptorBinding;
 
 	/**
 	 * Configuration passed to the SPIRVToMSLConverter.
@@ -129,6 +148,8 @@ namespace mvk {
 		SPIRVToMSLConversionOptions options;
 		std::vector<MSLShaderInput> shaderInputs;
 		std::vector<MSLResourceBinding> resourceBindings;
+		std::vector<uint32_t> discreteDescriptorSets;
+		std::vector<DescriptorBinding> dynamicBufferDescriptors;
 
 		/** Returns whether the pipeline stage being converted supports vertex attributes. */
 		bool stageSupportsVertexAttributes() const;
@@ -142,19 +163,22 @@ namespace mvk {
         /** Returns whether the vertex buffer at the specified Vulkan binding is used by the shader. */
 		bool isVertexBufferUsed(uint32_t binding) const { return countShaderInputsAt(binding) > 0; }
 
+		/** Returns whether the resource at the specified descriptor set binding is used by the shader. */
+		bool isResourceUsed(spv::ExecutionModel stage, uint32_t descSet, uint32_t binding) const;
+
 		/** Marks all input variables and resources as being used by the shader. */
 		void markAllInputsAndResourcesUsed();
 
         /**
-         * Returns whether this configuration matches the other context. It does if the
-		 * respective options match and any vertex attributes and resource bindings used
+         * Returns whether this configuration matches the other configuration. It does if
+		 * the respective options match and any vertex attributes and resource bindings used
 		 * by this configuration can be found in the other configuration. Vertex attributes
 		 * and resource bindings that are in the other configuration but are not used by
 		 * the shader that created this configuration, are ignored.
          */
         bool matches(const SPIRVToMSLConversionConfiguration& other) const;
 
-        /** Aligns certain aspects of this configuration with the source context. */
+        /** Aligns certain aspects of this configuration with the source configuration. */
         void alignWith(const SPIRVToMSLConversionConfiguration& srcContext);
 
 	} SPIRVToMSLConversionConfiguration;
@@ -171,7 +195,7 @@ namespace mvk {
 	 * THIS STRUCT IS STREAMED OUT AS PART OF THE PIEPLINE CACHE.
 	 * CHANGES TO THIS STRUCT SHOULD BE CAPTURED IN THE STREAMING LOGIC OF THE PIPELINE CACHE.
      */
-	typedef struct {
+	typedef struct SPIRVWorkgroupSizeDimension {
 		uint32_t size = 1;
 		uint32_t specializationID = 0;
 		bool isSpecialized = false;
@@ -185,7 +209,7 @@ namespace mvk {
 	 * THIS STRUCT IS STREAMED OUT AS PART OF THE PIEPLINE CACHE.
 	 * CHANGES TO THIS STRUCT SHOULD BE CAPTURED IN THE STREAMING LOGIC OF THE PIPELINE CACHE.
      */
-	typedef struct {
+	typedef struct SPIRVEntryPoint {
 		std::string mtlFunctionName = "main0";
 		struct {
 			SPIRVWorkgroupSizeDimension width;
@@ -209,6 +233,7 @@ namespace mvk {
 		bool needsOutputBuffer = false;
 		bool needsPatchOutputBuffer = false;
 		bool needsBufferSizeBuffer = false;
+		bool needsDynamicOffsetBuffer = false;
 		bool needsInputThreadgroupMem = false;
 		bool needsDispatchBaseBuffer = false;
 		bool needsViewRangeBuffer = false;
@@ -248,7 +273,7 @@ namespace mvk {
          * and optionally, the original GLSL (as converted from the SPIR_V), should be logged 
          * to the result log of this converter. This can be useful during shader debugging.
 		 */
-		bool convert(SPIRVToMSLConversionConfiguration& context,
+		bool convert(SPIRVToMSLConversionConfiguration& shaderConfig,
                      bool shouldLogSPIRV = false,
                      bool shouldLogMSL = false,
                      bool shouldLogGLSL = false);

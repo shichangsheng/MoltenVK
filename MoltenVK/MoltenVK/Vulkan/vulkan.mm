@@ -50,7 +50,7 @@
 
 // Optionally log start of function calls to stderr
 static inline uint64_t MVKTraceVulkanCallStartImpl(const char* funcName) {
-	MVKConfigTraceVulkanCalls traceLvl = mvkGetMVKConfiguration()->traceVulkanCalls;
+	MVKConfigTraceVulkanCalls traceLvl = mvkConfig().traceVulkanCalls;
 
 	if (traceLvl == MVK_CONFIG_TRACE_VULKAN_CALLS_NONE ||
 		traceLvl > MVK_CONFIG_TRACE_VULKAN_CALLS_DURATION) { return 0; }
@@ -72,7 +72,7 @@ static inline uint64_t MVKTraceVulkanCallStartImpl(const char* funcName) {
 
 // Optionally log end of function calls and timings to stderr
 static inline void MVKTraceVulkanCallEndImpl(const char* funcName, uint64_t startTime) {
-	switch(mvkGetMVKConfiguration()->traceVulkanCalls) {
+	switch(mvkConfig().traceVulkanCalls) {
 		case MVK_CONFIG_TRACE_VULKAN_CALLS_DURATION:
 			fprintf(stderr, "[mvk-trace] } %s [%.4f ms]\n", funcName, mvkGetElapsedMilliseconds(startTime));
 			break;
@@ -129,6 +129,36 @@ static inline void MVKTraceVulkanCallEndImpl(const char* funcName, uint64_t star
 		MVKAddCmd(baseCmdType ##threshold3, vkCmdBuff, ##__VA_ARGS__);										\
 	} else {																								\
 		MVKAddCmd(baseCmdType ##Multi, vkCmdBuff, ##__VA_ARGS__);											\
+	}
+
+// Add one of nine commands, based on comparing a command parameter against four threshold values
+#define MVKAddCmdFrom5Thresholds(baseCmdType, value1, arg1Threshold1, arg1Threshold2,			\
+								 value2, arg2Threshold1, arg2Threshold2, arg2Threshold3,		\
+								 vkCmdBuff, ...)												\
+	if (value1 <= arg1Threshold1 && value2 <= arg2Threshold1) {									\
+		MVKAddCmd(baseCmdType ##arg1Threshold1 ##arg2Threshold1, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 <= arg1Threshold2 && value2 <= arg2Threshold1) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold1 ##arg2Threshold1, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 > arg1Threshold2 && value2 <= arg2Threshold1) {							\
+		MVKAddCmd(baseCmdType ##Multi ##arg2Threshold1, vkCmdBuff, ##__VA_ARGS__);				\
+	} else if (value1 <= arg1Threshold1 && value2 <= arg2Threshold2) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold1 ##arg2Threshold2, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 <= arg1Threshold2 && value2 <= arg2Threshold2) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold2 ##arg2Threshold2, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 > arg1Threshold2 && value2 <= arg2Threshold2) {							\
+		MVKAddCmd(baseCmdType ##Multi ##arg2Threshold2, vkCmdBuff, ##__VA_ARGS__);				\
+	} else if (value1 <= arg1Threshold1 && value2 <= arg2Threshold3) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold1 ##arg2Threshold3, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 <= arg1Threshold2 && value2 <= arg2Threshold3) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold2 ##arg2Threshold3, vkCmdBuff, ##__VA_ARGS__);		\
+	} else if (value1 > arg1Threshold2 && value2 <= arg2Threshold3) {							\
+		MVKAddCmd(baseCmdType ##Multi ##arg2Threshold3, vkCmdBuff, ##__VA_ARGS__);				\
+	} else if (value1 <= arg1Threshold1 && value2 > arg2Threshold3) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold1 ##Multi, vkCmdBuff, ##__VA_ARGS__);				\
+	} else if (value1 <= arg1Threshold2 && value2 > arg2Threshold3) {							\
+		MVKAddCmd(baseCmdType ##arg1Threshold2 ##Multi, vkCmdBuff, ##__VA_ARGS__);				\
+	} else {																					\
+		MVKAddCmd(baseCmdType ##Multi ##Multi, vkCmdBuff, ##__VA_ARGS__);						\
 	}
 
 // Define an extension call as an alias of a core call
@@ -367,7 +397,7 @@ MVK_PUBLIC_SYMBOL VkResult vkQueueSubmit(
 
 	MVKTraceVulkanCallStart();
 	MVKQueue* mvkQ = MVKQueue::getMVKQueue(queue);
-	VkResult rslt = mvkQ->submit(submitCount, pSubmits, fence);
+	VkResult rslt = mvkQ->submit(submitCount, pSubmits, fence, kMVKCommandUseQueueSubmit);
 	MVKTraceVulkanCallEnd();
 	return rslt;
 }
@@ -377,7 +407,7 @@ MVK_PUBLIC_SYMBOL VkResult vkQueueWaitIdle(
 	
 	MVKTraceVulkanCallStart();
 	MVKQueue* mvkQ = MVKQueue::getMVKQueue(queue);
-	VkResult rslt = mvkQ->waitIdle();
+	VkResult rslt = mvkQ->waitIdle(kMVKCommandUseQueueWaitIdle);
 	MVKTraceVulkanCallEnd();
 	return rslt;
 }
@@ -1863,13 +1893,50 @@ MVK_PUBLIC_SYMBOL void vkCmdPushConstants(
 	MVKTraceVulkanCallEnd();
 }
 
+// Consolidation function
+static void mvkCmdBeginRenderPass(
+	VkCommandBuffer								commandBuffer,
+	const VkRenderPassBeginInfo*				pRenderPassBegin,
+	const VkSubpassBeginInfo*					pSubpassBeginInfo) {
+
+	VkRenderPassAttachmentBeginInfo* pAttachmentBegin = nullptr;
+	for (const auto* next = (VkBaseInStructure*)pRenderPassBegin->pNext; next; next = next->pNext) {
+		switch(next->sType) {
+			case VK_STRUCTURE_TYPE_RENDER_PASS_ATTACHMENT_BEGIN_INFO: {
+				pAttachmentBegin = (VkRenderPassAttachmentBeginInfo*)next;
+				break;
+			}
+			default:
+				break;
+		}
+	}
+	auto attachments = (pAttachmentBegin
+						? MVKArrayRef<MVKImageView*>((MVKImageView**)pAttachmentBegin->pAttachments,
+													 pAttachmentBegin->attachmentCount)
+						: ((MVKFramebuffer*)pRenderPassBegin->framebuffer)->getAttachments());
+	
+	MVKAddCmdFrom5Thresholds(BeginRenderPass,
+							 pRenderPassBegin->clearValueCount, 1, 2,
+							 attachments.size, 0, 1, 2,
+							 commandBuffer,
+							 pRenderPassBegin,
+							 pSubpassBeginInfo,
+							 attachments);
+}
+
 MVK_PUBLIC_SYMBOL void vkCmdBeginRenderPass(
     VkCommandBuffer                             commandBuffer,
     const VkRenderPassBeginInfo*                pRenderPassBegin,
     VkSubpassContents							contents) {
-	
+
 	MVKTraceVulkanCallStart();
-	MVKAddCmdFrom2Thresholds(BeginRenderPass, pRenderPassBegin->clearValueCount, 1, 2, commandBuffer,pRenderPassBegin, contents);
+
+	VkSubpassBeginInfo spBeginInfo;
+	spBeginInfo.sType = VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO;
+	spBeginInfo.pNext = nullptr;
+	spBeginInfo.contents = contents;
+
+	mvkCmdBeginRenderPass(commandBuffer, pRenderPassBegin, &spBeginInfo);
 	MVKTraceVulkanCallEnd();
 }
 
@@ -1908,7 +1975,7 @@ MVK_PUBLIC_SYMBOL VkResult vkEnumerateInstanceVersion(
     uint32_t*                                   pApiVersion) {
 
     MVKTraceVulkanCallStart();
-    *pApiVersion = mvkGetMVKConfiguration()->apiVersionToAdvertise;
+    *pApiVersion = mvkConfig().apiVersionToAdvertise;
     MVKTraceVulkanCallEnd();
     return VK_SUCCESS;
 }
@@ -2283,7 +2350,7 @@ MVK_PUBLIC_SYMBOL void vkCmdBeginRenderPass2KHR(
 	const VkSubpassBeginInfo*					pSubpassBeginInfo) {
 
 	MVKTraceVulkanCallStart();
-	MVKAddCmdFrom2Thresholds(BeginRenderPass, pRenderPassBegin->clearValueCount, 1, 2, commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+	mvkCmdBeginRenderPass(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
 	MVKTraceVulkanCallEnd();
 }
 

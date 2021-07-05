@@ -32,6 +32,13 @@ using namespace SPIRV_CROSS_NAMESPACE;
 #pragma mark -
 #pragma mark SPIRVToMSLConversionConfiguration
 
+// Returns whether the container contains an item equal to the value.
+template<class C, class T>
+bool contains(const C& container, const T& val) {
+	for (const T& cVal : container) { if (cVal == val) { return true; } }
+	return false;
+}
+
 // Returns whether the vector contains the value (using a matches(T&) comparison member function). */
 template<class T>
 bool containsMatching(const vector<T>& vec, const T& val) {
@@ -40,18 +47,16 @@ bool containsMatching(const vector<T>& vec, const T& val) {
 }
 
 MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionOptions::matches(const SPIRVToMSLConversionOptions& other) const {
+	if (memcmp(&mslOptions, &other.mslOptions, sizeof(mslOptions)) != 0) { return false; }
 	if (entryPointStage != other.entryPointStage) { return false; }
 	if (entryPointName != other.entryPointName) { return false; }
 	if (tessPatchKind != other.tessPatchKind) { return false; }
 	if (numTessControlPoints != other.numTessControlPoints) { return false; }
 	if (shouldFlipVertexY != other.shouldFlipVertexY) { return false; }
-
-	if (memcmp(&mslOptions, &other.mslOptions, sizeof(mslOptions)) != 0) { return false; }
-
 	return true;
 }
 
-MVK_PUBLIC_SYMBOL std::string SPIRVToMSLConversionOptions::printMSLVersion(uint32_t mslVersion, bool includePatch) {
+MVK_PUBLIC_SYMBOL string SPIRVToMSLConversionOptions::printMSLVersion(uint32_t mslVersion, bool includePatch) {
 	string verStr;
 
 	uint32_t major = mslVersion / 10000;
@@ -90,57 +95,42 @@ MVK_PUBLIC_SYMBOL SPIRVToMSLConversionOptions::SPIRVToMSLConversionOptions() {
 }
 
 MVK_PUBLIC_SYMBOL bool mvk::MSLShaderInput::matches(const mvk::MSLShaderInput& other) const {
-	if (shaderInput.location != other.shaderInput.location) { return false; }
-	if (shaderInput.format != other.shaderInput.format) { return false; }
-	if (shaderInput.builtin != other.shaderInput.builtin) { return false; }
-	if (shaderInput.vecsize != other.shaderInput.vecsize) { return false; }
+	if (memcmp(&shaderInput, &other.shaderInput, sizeof(shaderInput)) != 0) { return false; }
 	if (binding != other.binding) { return false; }
 	return true;
 }
 
+MVK_PUBLIC_SYMBOL mvk::MSLShaderInput::MSLShaderInput() {
+	// Explicitly set shaderInput to defaults over cleared memory to ensure all instances
+	// have exactly the same memory layout when using memory comparison in matches().
+	memset(&shaderInput, 0, sizeof(shaderInput));
+	shaderInput = SPIRV_CROSS_NAMESPACE::MSLShaderInput();
+}
+
+// If requiresConstExprSampler is false, constExprSampler can be ignored
 MVK_PUBLIC_SYMBOL bool mvk::MSLResourceBinding::matches(const MSLResourceBinding& other) const {
-	if (resourceBinding.stage != other.resourceBinding.stage) { return false; }
-	if (resourceBinding.desc_set != other.resourceBinding.desc_set) { return false; }
-	if (resourceBinding.binding != other.resourceBinding.binding) { return false; }
-	if (resourceBinding.count != other.resourceBinding.count) { return false; }
-	if (resourceBinding.msl_buffer != other.resourceBinding.msl_buffer) { return false; }
-	if (resourceBinding.msl_texture != other.resourceBinding.msl_texture) { return false; }
-	if (resourceBinding.msl_sampler != other.resourceBinding.msl_sampler) { return false; }
-
+	if (memcmp(&resourceBinding, &other.resourceBinding, sizeof(resourceBinding)) != 0) { return false; }
 	if (requiresConstExprSampler != other.requiresConstExprSampler) { return false; }
-
-	// If requiresConstExprSampler is false, constExprSampler can be ignored
 	if (requiresConstExprSampler) {
-		if (constExprSampler.coord != other.constExprSampler.coord) { return false; }
-		if (constExprSampler.min_filter != other.constExprSampler.min_filter) { return false; }
-		if (constExprSampler.mag_filter != other.constExprSampler.mag_filter) { return false; }
-		if (constExprSampler.mip_filter != other.constExprSampler.mip_filter) { return false; }
-		if (constExprSampler.s_address != other.constExprSampler.s_address) { return false; }
-		if (constExprSampler.t_address != other.constExprSampler.t_address) { return false; }
-		if (constExprSampler.r_address != other.constExprSampler.r_address) { return false; }
-		if (constExprSampler.compare_func != other.constExprSampler.compare_func) { return false; }
-		if (constExprSampler.border_color != other.constExprSampler.border_color) { return false; }
-		if (constExprSampler.lod_clamp_min != other.constExprSampler.lod_clamp_min) { return false; }
-		if (constExprSampler.lod_clamp_max != other.constExprSampler.lod_clamp_max) { return false; }
-		if (constExprSampler.max_anisotropy != other.constExprSampler.max_anisotropy) { return false; }
-
-		if (constExprSampler.planes != other.constExprSampler.planes) { return false; }
-		if (constExprSampler.resolution != other.constExprSampler.resolution) { return false; }
-		if (constExprSampler.chroma_filter != other.constExprSampler.chroma_filter) { return false; }
-		if (constExprSampler.x_chroma_offset != other.constExprSampler.x_chroma_offset) { return false; }
-		if (constExprSampler.y_chroma_offset != other.constExprSampler.y_chroma_offset) { return false; }
-		for(uint32_t i = 0; i < 4; ++i)
-			if (constExprSampler.swizzle[i] != other.constExprSampler.swizzle[i]) { return false; }
-		if (constExprSampler.ycbcr_model != other.constExprSampler.ycbcr_model) { return false; }
-		if (constExprSampler.ycbcr_range != other.constExprSampler.ycbcr_range) { return false; }
-		if (constExprSampler.bpc != other.constExprSampler.bpc) { return false; }
-
-		if (constExprSampler.compare_enable != other.constExprSampler.compare_enable) { return false; }
-		if (constExprSampler.lod_clamp_enable != other.constExprSampler.lod_clamp_enable) { return false; }
-		if (constExprSampler.anisotropy_enable != other.constExprSampler.anisotropy_enable) { return false; }
-		if (constExprSampler.ycbcr_conversion_enable != other.constExprSampler.ycbcr_conversion_enable) { return false; }
+		if (memcmp(&constExprSampler, &other.constExprSampler, sizeof(constExprSampler)) != 0) { return false; }
 	}
+	return true;
+}
 
+MVK_PUBLIC_SYMBOL mvk::MSLResourceBinding::MSLResourceBinding() {
+	// Explicitly set resourceBinding and constExprSampler to defaults over cleared memory to ensure
+	// all instances have exactly the same memory layout when using memory comparison in matches().
+	memset(&resourceBinding, 0, sizeof(resourceBinding));
+	resourceBinding = SPIRV_CROSS_NAMESPACE::MSLResourceBinding();
+	memset(&constExprSampler, 0, sizeof(constExprSampler));
+	constExprSampler = SPIRV_CROSS_NAMESPACE::MSLConstexprSampler();
+}
+
+MVK_PUBLIC_SYMBOL bool mvk::DescriptorBinding::matches(const mvk::DescriptorBinding& other) const {
+	if (stage != other.stage) { return false; }
+	if (descriptorSet != other.descriptorSet) { return false; }
+	if (binding != other.binding) { return false; }
+	if (index != other.index) { return false; }
 	return true;
 }
 
@@ -153,7 +143,7 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::stageSupportsVertexAtt
 // Check them all in case inactive VA's duplicate locations used by active VA's.
 MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::isShaderInputLocationUsed(uint32_t location) const {
     for (auto& si : shaderInputs) {
-        if ((si.shaderInput.location == location) && si.isUsedByShader) { return true; }
+        if ((si.shaderInput.location == location) && si.outIsUsedByShader) { return true; }
     }
     return false;
 }
@@ -161,27 +151,53 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::isShaderInputLocationU
 MVK_PUBLIC_SYMBOL uint32_t SPIRVToMSLConversionConfiguration::countShaderInputsAt(uint32_t binding) const {
 	uint32_t siCnt = 0;
 	for (auto& si : shaderInputs) {
-		if ((si.binding == binding) && si.isUsedByShader) { siCnt++; }
+		if ((si.binding == binding) && si.outIsUsedByShader) { siCnt++; }
 	}
 	return siCnt;
 }
 
-MVK_PUBLIC_SYMBOL void SPIRVToMSLConversionConfiguration::markAllInputsAndResourcesUsed() {
-	for (auto& si : shaderInputs) { si.isUsedByShader = true; }
-	for (auto& rb : resourceBindings) { rb.isUsedByShader = true; }
+MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::isResourceUsed(ExecutionModel stage, uint32_t descSet, uint32_t binding) const {
+	for (auto& rb : resourceBindings) {
+		auto& rbb = rb.resourceBinding;
+		if (rbb.stage == stage && rbb.desc_set == descSet && rbb.binding == binding) {
+			return rb.outIsUsedByShader;
+		}
+	}
+	return false;
 }
 
+MVK_PUBLIC_SYMBOL void SPIRVToMSLConversionConfiguration::markAllInputsAndResourcesUsed() {
+	for (auto& si : shaderInputs) { si.outIsUsedByShader = true; }
+	for (auto& rb : resourceBindings) { rb.outIsUsedByShader = true; }
+}
+
+// A single SPIRVToMSLConversionConfiguration instance is used for all pipeline shader stages,
+// and the resources can be spread across these shader stages. To improve cache hits when using
+// this function to find a cached shader for a particular shader stage, only consider the resources
+// that are used in that shader stage. By contrast, discreteDescriptorSet apply across all stages,
+// and shaderInputs are populated before each stage, so neither needs to be filtered by stage here.
 MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::matches(const SPIRVToMSLConversionConfiguration& other) const {
 
     if ( !options.matches(other.options) ) { return false; }
 
 	for (const auto& si : shaderInputs) {
-		if (si.isUsedByShader && !containsMatching(other.shaderInputs, si)) { return false; }
+		if (si.outIsUsedByShader && !containsMatching(other.shaderInputs, si)) { return false; }
 	}
 
     for (const auto& rb : resourceBindings) {
-        if (rb.isUsedByShader && !containsMatching(other.resourceBindings, rb)) { return false; }
+        if (rb.resourceBinding.stage == options.entryPointStage &&
+			rb.outIsUsedByShader &&
+			!containsMatching(other.resourceBindings, rb)) { return false; }
     }
+
+	for (const auto& db : dynamicBufferDescriptors) {
+		if (db.stage == options.entryPointStage &&
+			!containsMatching(other.dynamicBufferDescriptors, db)) { return false; }
+	}
+
+	for (uint32_t dsIdx : discreteDescriptorSets) {
+		if ( !contains(other.discreteDescriptorSets, dsIdx)) { return false; }
+	}
 
     return true;
 }
@@ -190,16 +206,18 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConversionConfiguration::matches(const SPIRVToM
 MVK_PUBLIC_SYMBOL void SPIRVToMSLConversionConfiguration::alignWith(const SPIRVToMSLConversionConfiguration& srcContext) {
 
 	for (auto& si : shaderInputs) {
-		si.isUsedByShader = false;
+		si.outIsUsedByShader = false;
 		for (auto& srcSI : srcContext.shaderInputs) {
-			if (si.matches(srcSI)) { si.isUsedByShader = srcSI.isUsedByShader; }
+			if (si.matches(srcSI)) { si.outIsUsedByShader = srcSI.outIsUsedByShader; }
 		}
 	}
 
     for (auto& rb : resourceBindings) {
-        rb.isUsedByShader = false;
+        rb.outIsUsedByShader = false;
         for (auto& srcRB : srcContext.resourceBindings) {
-            if (rb.matches(srcRB)) { rb.isUsedByShader = srcRB.isUsedByShader; }
+			if (rb.matches(srcRB)) {
+				rb.outIsUsedByShader = srcRB.outIsUsedByShader;
+			}
         }
     }
 }
@@ -216,7 +234,7 @@ MVK_PUBLIC_SYMBOL void SPIRVToMSLConverter::setSPIRV(const uint32_t* spirvCode, 
 	}
 }
 
-MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfiguration& context,
+MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfiguration& shaderConfig,
 													bool shouldLogSPIRV,
 													bool shouldLogMSL,
                                                     bool shouldLogGLSL) {
@@ -240,36 +258,36 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfigur
 #endif
 		pMSLCompiler = new CompilerMSL(_spirv);
 
-		if (context.options.hasEntryPoint()) {
-			pMSLCompiler->set_entry_point(context.options.entryPointName, context.options.entryPointStage);
+		if (shaderConfig.options.hasEntryPoint()) {
+			pMSLCompiler->set_entry_point(shaderConfig.options.entryPointName, shaderConfig.options.entryPointStage);
 		}
 
 		// Set up tessellation parameters if needed.
-		if (context.options.entryPointStage == ExecutionModelTessellationControl ||
-			context.options.entryPointStage == ExecutionModelTessellationEvaluation) {
-			if (context.options.tessPatchKind != ExecutionModeMax) {
-				pMSLCompiler->set_execution_mode(context.options.tessPatchKind);
+		if (shaderConfig.options.entryPointStage == ExecutionModelTessellationControl ||
+			shaderConfig.options.entryPointStage == ExecutionModelTessellationEvaluation) {
+			if (shaderConfig.options.tessPatchKind != ExecutionModeMax) {
+				pMSLCompiler->set_execution_mode(shaderConfig.options.tessPatchKind);
 			}
-			if (context.options.numTessControlPoints != 0) {
-				pMSLCompiler->set_execution_mode(ExecutionModeOutputVertices, context.options.numTessControlPoints);
+			if (shaderConfig.options.numTessControlPoints != 0) {
+				pMSLCompiler->set_execution_mode(ExecutionModeOutputVertices, shaderConfig.options.numTessControlPoints);
 			}
 		}
 
 		// Establish the MSL options for the compiler
 		// This needs to be done in two steps...for CompilerMSL and its superclass.
-		pMSLCompiler->set_msl_options(context.options.mslOptions);
+		pMSLCompiler->set_msl_options(shaderConfig.options.mslOptions);
 
 		auto scOpts = pMSLCompiler->get_common_options();
-		scOpts.vertex.flip_vert_y = context.options.shouldFlipVertexY;
+		scOpts.vertex.flip_vert_y = shaderConfig.options.shouldFlipVertexY;
 		pMSLCompiler->set_common_options(scOpts);
 
 		// Add shader inputs
-		for (auto& si : context.shaderInputs) {
+		for (auto& si : shaderConfig.shaderInputs) {
 			pMSLCompiler->add_msl_shader_input(si.shaderInput);
 		}
 
 		// Add resource bindings and hardcoded constexpr samplers
-		for (auto& rb : context.resourceBindings) {
+		for (auto& rb : shaderConfig.resourceBindings) {
 			auto& rbb = rb.resourceBinding;
 			pMSLCompiler->add_msl_resource_binding(rbb);
 
@@ -278,6 +296,21 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfigur
 			}
 		}
 
+		// Add any descriptor sets that are not using Metal argument buffers.
+		// This only has an effect if SPIRVToMSLConversionConfiguration::options::mslOptions::argument_buffers is enabled.
+		for (uint32_t dsIdx : shaderConfig.discreteDescriptorSets) {
+			pMSLCompiler->add_discrete_descriptor_set(dsIdx);
+		}
+
+		// Add any dynamic buffer bindings.
+		// This only has an applies if SPIRVToMSLConversionConfiguration::options::mslOptions::argument_buffers is enabled.
+		if (shaderConfig.options.mslOptions.argument_buffers) {
+			for (auto& db : shaderConfig.dynamicBufferDescriptors) {
+				if (db.stage == shaderConfig.options.entryPointStage) {
+					pMSLCompiler->add_dynamic_buffer(db.descriptorSet, db.binding, db.index);
+				}
+			}
+		}
 		_msl = pMSLCompiler->compile();
 
         if (shouldLogMSL) { logSource(_msl, "MSL", "Converted"); }
@@ -296,7 +329,7 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfigur
 
 	// Populate the shader conversion results with info from the compilation run,
 	// and mark which vertex attributes and resource bindings are used by the shader
-	populateEntryPoint(pMSLCompiler, context.options);
+	populateEntryPoint(pMSLCompiler, shaderConfig.options);
 	_shaderConversionResults.isRasterizationDisabled = pMSLCompiler && pMSLCompiler->get_is_rasterization_disabled();
 	_shaderConversionResults.isPositionInvariant = pMSLCompiler && pMSLCompiler->is_position_invariant();
 	_shaderConversionResults.needsSwizzleBuffer = pMSLCompiler && pMSLCompiler->needs_swizzle_buffer();
@@ -307,13 +340,26 @@ MVK_PUBLIC_SYMBOL bool SPIRVToMSLConverter::convert(SPIRVToMSLConversionConfigur
 	_shaderConversionResults.needsDispatchBaseBuffer = pMSLCompiler && pMSLCompiler->needs_dispatch_base_buffer();
 	_shaderConversionResults.needsViewRangeBuffer = pMSLCompiler && pMSLCompiler->needs_view_mask_buffer();
 
-	for (auto& ctxSI : context.shaderInputs) {
-		ctxSI.isUsedByShader = pMSLCompiler->is_msl_shader_input_used(ctxSI.shaderInput.location);
+	// When using Metal argument buffers, if the shader is provided with dynamic buffer offsets,
+	// then it needs a buffer to hold these dynamic offsets.
+	_shaderConversionResults.needsDynamicOffsetBuffer = false;
+	if (shaderConfig.options.mslOptions.argument_buffers) {
+		for (auto& db : shaderConfig.dynamicBufferDescriptors) {
+			if (db.stage == shaderConfig.options.entryPointStage) {
+				_shaderConversionResults.needsDynamicOffsetBuffer = true;
+			}
+		}
 	}
-	for (auto& ctxRB : context.resourceBindings) {
-		ctxRB.isUsedByShader = pMSLCompiler->is_msl_resource_binding_used(ctxRB.resourceBinding.stage,
-																		  ctxRB.resourceBinding.desc_set,
-																		  ctxRB.resourceBinding.binding);
+
+	for (auto& ctxSI : shaderConfig.shaderInputs) {
+		ctxSI.outIsUsedByShader = pMSLCompiler->is_msl_shader_input_used(ctxSI.shaderInput.location);
+	}
+	for (auto& ctxRB : shaderConfig.resourceBindings) {
+		if (ctxRB.resourceBinding.stage == shaderConfig.options.entryPointStage) {
+			ctxRB.outIsUsedByShader = pMSLCompiler->is_msl_resource_binding_used(ctxRB.resourceBinding.stage,
+																				 ctxRB.resourceBinding.desc_set,
+																				 ctxRB.resourceBinding.binding);
+		}
 	}
 
 	delete pMSLCompiler;

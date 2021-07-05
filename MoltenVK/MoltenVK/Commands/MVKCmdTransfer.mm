@@ -88,8 +88,6 @@ void MVKCmdCopyImage<N>::encode(MVKCommandEncoder* cmdEncoder, MVKCommandUse com
     VkBufferImageCopy vkDstCopies[copyCnt];
     size_t tmpBuffSize = 0;
 
-    _srcImage->flushToDevice(0, VK_WHOLE_SIZE);
-
     for (uint32_t copyIdx = 0; copyIdx < copyCnt; copyIdx++) {
         auto& vkIC = _vkImageCopies[copyIdx];
         
@@ -1236,7 +1234,7 @@ void MVKCmdClearAttachments<N>::encode(MVKCommandEncoder* cmdEncoder) {
 	simd::float4 vertices[vtxCnt];
 	simd::float4 clearColors[kMVKClearAttachmentCount];
 
-	VkExtent2D fbExtent = cmdEncoder->_framebuffer->getExtent2D();
+	VkExtent2D fbExtent = cmdEncoder->_framebufferExtent;
 #if MVK_MACOS_OR_IOS
 	// I need to know if the 'renderTargetWidth' and 'renderTargetHeight' properties
 	// actually do something, but [MTLRenderPassDescriptor instancesRespondToSelector: @selector(renderTargetWidth)]
@@ -1257,7 +1255,7 @@ void MVKCmdClearAttachments<N>::encode(MVKCommandEncoder* cmdEncoder) {
     // Populate the render pipeline state attachment key with info from the subpass and framebuffer.
 	_rpsKey.mtlSampleCount = mvkSampleCountFromVkSampleCountFlagBits(subpass->getSampleCount());
 	if (cmdEncoder->_canUseLayeredRendering &&
-		(cmdEncoder->_framebuffer->getLayerCount() > 1 || cmdEncoder->getSubpass()->isMultiview())) {
+		(cmdEncoder->_framebufferLayerCount > 1 || cmdEncoder->getSubpass()->isMultiview())) {
 		_rpsKey.enableLayeredRendering();
 	}
 
@@ -1614,11 +1612,9 @@ void MVKCmdUpdateBuffer::encode(MVKCommandEncoder* cmdEncoder) {
     NSUInteger dstMTLBuffOffset = _dstBuffer->getMTLBufferOffset() + _dstOffset;
 
     // Copy data to the source MTLBuffer
-    MVKMTLBufferAllocation* srcMTLBufferAlloc = (MVKMTLBufferAllocation*)cmdEncoder->getCommandEncodingPool()->acquireMTLBufferAllocation(_dataSize);
+    MVKMTLBufferAllocation* srcMTLBufferAlloc = cmdEncoder->getCommandEncodingPool()->acquireMTLBufferAllocation(_dataSize);
     void* pBuffData = srcMTLBufferAlloc->getContents();
-    mlock(pBuffData, _dataSize);
     memcpy(pBuffData, _srcDataCache.data(), _dataSize);
-    munlock(pBuffData, _dataSize);
 
     [mtlBlitEnc copyFromBuffer: srcMTLBufferAlloc->_mtlBuffer
                   sourceOffset: srcMTLBufferAlloc->_offset

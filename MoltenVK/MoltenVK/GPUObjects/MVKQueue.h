@@ -45,10 +45,10 @@ public:
 	MVKVulkanAPIObject* getVulkanAPIObject() override { return _physicalDevice->getVulkanAPIObject(); }
 
 	/** Returns the index of this queue family. */
-	inline uint32_t getIndex() { return _queueFamilyIndex; }
+	uint32_t getIndex() { return _queueFamilyIndex; }
 
 	/** Populates the specified properties structure. */
-	inline void getProperties(VkQueueFamilyProperties* queueProperties) {
+	void getProperties(VkQueueFamilyProperties* queueProperties) {
 		if (queueProperties) { *queueProperties = _properties; }
 	}
 
@@ -89,25 +89,25 @@ public:
 #pragma mark Queue submissions
 
 	/** Submits the specified command buffers to the queue. */
-	VkResult submit(uint32_t submitCount, const VkSubmitInfo* pSubmits, VkFence fence);
+	VkResult submit(uint32_t submitCount, const VkSubmitInfo* pSubmits, VkFence fence, MVKCommandUse cmdUse);
 
 	/** Submits the specified presentation command to the queue. */
 	VkResult submit(const VkPresentInfoKHR* pPresentInfo);
 
 	/** Block the current thread until this queue is idle. */
-	VkResult waitIdle();
+	VkResult waitIdle(MVKCommandUse cmdUse);
 
 	/** Return the name of this queue. */
-	inline const std::string& getName() { return _name; }
+	const std::string& getName() { return _name; }
 
 
 #pragma mark Metal
 
 	/** Returns the Metal queue underlying this queue. */
-	inline id<MTLCommandQueue> getMTLCommandQueue() { return _mtlQueue; }
+	id<MTLCommandQueue> getMTLCommandQueue() { return _mtlQueue; }
 
 	/** Returns a Metal command buffer from the Metal queue. */
-	id<MTLCommandBuffer> getMTLCommandBuffer(bool retainRefs = false);
+	id<MTLCommandBuffer> getMTLCommandBuffer(MVKCommandUse cmdUse, bool retainRefs = false);
 
 #pragma mark Construction
 	
@@ -120,13 +120,13 @@ public:
      * Returns a reference to this object suitable for use as a Vulkan API handle.
      * This is the compliment of the getMVKQueue() method.
      */
-    inline VkQueue getVkQueue() { return (VkQueue)getVkHandle(); }
+    VkQueue getVkQueue() { return (VkQueue)getVkHandle(); }
 
     /**
      * Retrieves the MVKQueue instance referenced by the VkQueue handle.
      * This is the compliment of the getVkQueue() method.
      */
-    static inline MVKQueue* getMVKQueue(VkQueue vkQueue) {
+    static MVKQueue* getMVKQueue(VkQueue vkQueue) {
         return (MVKQueue*)getDispatchableObject(vkQueue);
     }
 
@@ -158,7 +158,7 @@ protected:
 #pragma mark MVKQueueSubmission
 
 /** This is an abstract class for an operation that can be submitted to an MVKQueue. */
-class MVKQueueSubmission : public MVKConfigurableObject {
+class MVKQueueSubmission : public MVKBaseObject, public MVKConfigurableMixin {
 
 public:
 
@@ -175,6 +175,8 @@ public:
 	MVKQueueSubmission(MVKQueue* queue,
 					   uint32_t waitSemaphoreCount,
 					   const VkSemaphore* pWaitSemaphores);
+
+	~MVKQueueSubmission() override;
 
 protected:
 	friend class MVKQueue;
@@ -193,7 +195,9 @@ class MVKQueueCommandBufferSubmission : public MVKQueueSubmission {
 public:
 	void execute() override;
 
-	MVKQueueCommandBufferSubmission(MVKQueue* queue, const VkSubmitInfo* pSubmit, VkFence fence);
+	MVKQueueCommandBufferSubmission(MVKQueue* queue, const VkSubmitInfo* pSubmit, VkFence fence, MVKCommandUse cmdUse);
+
+	~MVKQueueCommandBufferSubmission() override;
 
 protected:
 	friend MVKCommandBuffer;
@@ -207,6 +211,7 @@ protected:
 	MVKSmallVector<std::pair<MVKSemaphore*, uint64_t>> _signalSemaphores;
 	MVKFence* _fence;
 	id<MTLCommandBuffer> _activeMTLCommandBuffer;
+	MVKCommandUse _commandUse;
 };
 
 
@@ -219,7 +224,7 @@ class MVKQueueFullCommandBufferSubmission : public MVKQueueCommandBufferSubmissi
 
 public:
 	MVKQueueFullCommandBufferSubmission(MVKQueue* queue, const VkSubmitInfo* pSubmit, VkFence fence) :
-		MVKQueueCommandBufferSubmission(queue, pSubmit, fence) {
+		MVKQueueCommandBufferSubmission(queue, pSubmit, fence, kMVKCommandUseQueueSubmit) {
 
 			// pSubmit can be null if just tracking the fence alone
 			if (pSubmit) {
@@ -234,7 +239,7 @@ public:
 		}
 
 protected:
-	void submitCommandBuffers() override { for (auto& cb : _cmdBuffers) { cb->submit(this); } }
+	void submitCommandBuffers() override;
 
 	MVKSmallVector<MVKCommandBuffer*, N> _cmdBuffers;
 };
@@ -253,7 +258,6 @@ public:
 									 const VkPresentInfoKHR* pPresentInfo);
 
 protected:
-	id<MTLCommandBuffer> getMTLCommandBuffer();
 	void stopAutoGPUCapture();
 
 	MVKSmallVector<MVKPresentTimingInfo, 4> _presentInfo;

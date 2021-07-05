@@ -19,6 +19,7 @@
 #include "MVKCmdRenderPass.h"
 #include "MVKCommandBuffer.h"
 #include "MVKCommandPool.h"
+#include "MVKFramebuffer.h"
 #include "MVKRenderPass.h"
 #include "MVKPipeline.h"
 #include "MVKFoundation.h"
@@ -30,8 +31,8 @@
 
 VkResult MVKCmdBeginRenderPassBase::setContent(MVKCommandBuffer* cmdBuff,
 											   const VkRenderPassBeginInfo* pRenderPassBegin,
-											   VkSubpassContents contents) {
-	_contents = contents;
+											   const VkSubpassBeginInfo* pSubpassBeginInfo) {
+	_contents = pSubpassBeginInfo->contents;
 	_renderPass = (MVKRenderPass*)pRenderPassBegin->renderPass;
 	_framebuffer = (MVKFramebuffer*)pRenderPassBegin->framebuffer;
 	_renderArea = pRenderPassBegin->renderArea;
@@ -43,40 +44,48 @@ VkResult MVKCmdBeginRenderPassBase::setContent(MVKCommandBuffer* cmdBuff,
 #pragma mark -
 #pragma mark MVKCmdBeginRenderPass
 
-template <size_t N>
-VkResult MVKCmdBeginRenderPass<N>::setContent(MVKCommandBuffer* cmdBuff,
-											  const VkRenderPassBeginInfo* pRenderPassBegin,
-											  VkSubpassContents contents) {
-	MVKCmdBeginRenderPassBase::setContent(cmdBuff, pRenderPassBegin, contents);
+template <size_t N_CV, size_t N_A>
+VkResult MVKCmdBeginRenderPass<N_CV, N_A>::setContent(MVKCommandBuffer* cmdBuff,
+													  const VkRenderPassBeginInfo* pRenderPassBegin,
+													  const VkSubpassBeginInfo* pSubpassBeginInfo,
+													  MVKArrayRef<MVKImageView*> attachments) {
+	MVKCmdBeginRenderPassBase::setContent(cmdBuff, pRenderPassBegin, pSubpassBeginInfo);
 
-	// Add clear values
-	uint32_t cvCnt = pRenderPassBegin->clearValueCount;
-	_clearValues.clear();	// Clear for reuse
-	_clearValues.reserve(cvCnt);
-	for (uint32_t i = 0; i < cvCnt; i++) {
-		_clearValues.push_back(pRenderPassBegin->pClearValues[i]);
-	}
+	_attachments.assign(attachments.begin(), attachments.end());
+	_clearValues.assign(pRenderPassBegin->pClearValues,
+						pRenderPassBegin->pClearValues + pRenderPassBegin->clearValueCount);
 
 	return VK_SUCCESS;
 }
 
-template <size_t N>
-VkResult MVKCmdBeginRenderPass<N>::setContent(MVKCommandBuffer* cmdBuff,
-											  const VkRenderPassBeginInfo* pRenderPassBegin,
-											  const VkSubpassBeginInfo* pSubpassBeginInfo) {
-	return setContent(cmdBuff, pRenderPassBegin, pSubpassBeginInfo->contents);
-}
-
-template <size_t N>
-void MVKCmdBeginRenderPass<N>::encode(MVKCommandEncoder* cmdEncoder) {
+template <size_t N_CV, size_t N_A>
+void MVKCmdBeginRenderPass<N_CV, N_A>::encode(MVKCommandEncoder* cmdEncoder) {
 //	MVKLogDebug("Encoding vkCmdBeginRenderPass(). Elapsed time: %.6f ms.", mvkGetElapsedMilliseconds());
-	cmdEncoder->beginRenderpass(this, _contents, _renderPass, _framebuffer, _renderArea, _clearValues.contents());
+	cmdEncoder->beginRenderpass(this,
+								_contents,
+								_renderPass,
+								_framebuffer->getExtent2D(),
+								_framebuffer->getLayerCount(),
+								_renderArea,
+								_clearValues.contents(),
+								_attachments.contents());
 }
 
-template class MVKCmdBeginRenderPass<1>;
-template class MVKCmdBeginRenderPass<2>;
-template class MVKCmdBeginRenderPass<9>;
+template class MVKCmdBeginRenderPass<1, 0>;
+template class MVKCmdBeginRenderPass<2, 0>;
+template class MVKCmdBeginRenderPass<9, 0>;
 
+template class MVKCmdBeginRenderPass<1, 1>;
+template class MVKCmdBeginRenderPass<2, 1>;
+template class MVKCmdBeginRenderPass<9, 1>;
+
+template class MVKCmdBeginRenderPass<1, 2>;
+template class MVKCmdBeginRenderPass<2, 2>;
+template class MVKCmdBeginRenderPass<9, 2>;
+
+template class MVKCmdBeginRenderPass<1, 9>;
+template class MVKCmdBeginRenderPass<2, 9>;
+template class MVKCmdBeginRenderPass<9, 9>;
 
 #pragma mark -
 #pragma mark MVKCmdNextSubpass

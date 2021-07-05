@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "MVKEnvironment.h"
 #include "MVKFoundation.h"
 #include "MVKVulkanAPIObject.h"
 #include "MVKMTLResourceBindings.h"
@@ -325,6 +326,9 @@ public:
 	/** Returns whether the MSL version is supported on this device. */
 	inline bool mslVersionIsAtLeast(MTLLanguageVersion minVer) { return _metalFeatures.mslVersionEnum >= minVer; }
 
+	/** Returns whether this device is using Metal argument buffers. */
+	inline bool isUsingMetalArgumentBuffers() const  { return _metalFeatures.argumentBuffers && mvkConfig().useMetalArgumentBuffers; };
+
 
 #pragma mark Construction
 
@@ -364,12 +368,13 @@ protected:
 	uint64_t getVRAMSize();
 	uint64_t getRecommendedMaxWorkingSetSize();
 	uint64_t getCurrentAllocatedSize();
+	uint32_t getMaxSamplerCount();
 	void initExternalMemoryProperties();
 	void initExtensions();
 	MVKArrayRef<MVKQueueFamily*> getQueueFamilies();
 	void initPipelineCacheUUID();
 	uint32_t getHighestMTLFeatureSet();
-	uint64_t getMoltenVKGitRevision();
+	uint32_t getMoltenVKGitRevision();
 	void populate(VkPhysicalDeviceIDProperties* pDevIdProps);
 	void logGPUInfo();
 
@@ -396,7 +401,7 @@ protected:
 #pragma mark -
 #pragma mark MVKDevice
 
-typedef struct {
+typedef struct MVKMTLBlitEncoder {
 	id<MTLBlitCommandEncoder> mtlBlitEncoder = nil;
 	id<MTLCommandBuffer> mtlCmdBuffer = nil;
 } MVKMTLBlitEncoder;
@@ -442,8 +447,8 @@ public:
 	/** Block the current thread until all queues in this device are idle. */
 	VkResult waitIdle();
 	
-	/** Mark this device as lost. Releases all waits for this device. */
-	VkResult markLost();
+	/** Mark this device (and optionally the physical device) as lost. Releases all waits for this device. */
+	VkResult markLost(bool alsoMarkPhysicalDevice = false);
 
 	/** Returns whether or not the given descriptor set layout is supported. */
 	void getDescriptorSetLayoutSupport(const VkDescriptorSetLayoutCreateInfo* pCreateInfo,
@@ -733,6 +738,7 @@ public:
 	const VkPhysicalDeviceTexelBufferAlignmentFeaturesEXT _enabledTexelBuffAlignFeatures;
 	const VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT _enabledVtxAttrDivFeatures;
 	const VkPhysicalDevicePortabilitySubsetFeaturesKHR _enabledPortabilityFeatures;
+	const VkPhysicalDeviceImagelessFramebufferFeaturesKHR _enabledImagelessFramebufferFeatures;
 
 	/** The list of Vulkan extensions, indicating whether each has been enabled by the app for this device. */
 	const MVKExtensionList _enabledExtensions;
@@ -848,6 +854,15 @@ public:
 	/** Returns info about the pixel format supported by the physical device. */
 	inline MVKPixelFormats* getPixelFormats() { return _device->getPixelFormats(); }
 
+	/** Returns whether this device is using Metal argument buffers. */
+	inline bool isUsingMetalArgumentBuffers() { return getPhysicalDevice()->isUsingMetalArgumentBuffers(); };
+
+	/** Returns whether this device is using one Metal argument buffer for each descriptor set, on multiple pipeline and pipeline stages. */
+	inline bool isUsingDescriptorSetMetalArgumentBuffers() { return isUsingMetalArgumentBuffers() && _device->_pMetalFeatures->descriptorSetArgumentBuffers; };
+
+	/** Returns whether this device is using one Metal argument buffer for each descriptor set-pipeline-stage combination. */
+	inline bool isUsingPipelineStageMetalArgumentBuffers() { return isUsingMetalArgumentBuffers() && !_device->_pMetalFeatures->descriptorSetArgumentBuffers; };
+
 	/** Constructs an instance for the specified device. */
     MVKDeviceTrackingMixin(MVKDevice* device) : _device(device) { assert(_device); }
 
@@ -892,6 +907,7 @@ public:
 
 protected:
 	MVKBaseObject* getBaseObject() override { return this; };
+
 };
 
 
@@ -929,25 +945,23 @@ protected:
 
 /** Manages a pool of instances of a particular object type that requires an MVKDevice during construction. */
 template <class T>
-class MVKDeviceObjectPool : public MVKObjectPool<T> {
+class MVKDeviceObjectPool : public MVKObjectPool<T>, public MVKDeviceTrackingMixin {
 
 public:
 
-
 	/** Returns the Vulkan API opaque object controlling this object. */
 	MVKVulkanAPIObject* getVulkanAPIObject() override { return _device; };
-
-	/** Returns a new instance. */
-	T* newObject() override { return new T(_device); }
 
 	/**
 	 * Configures this instance for the device, and either use pooling, or not, depending
 	 * on the value of isPooling, which defaults to true if not indicated explicitly.
 	 */
-	MVKDeviceObjectPool(MVKDevice* device, bool isPooling = true) : MVKObjectPool<T>(isPooling), _device(device) {}
+	MVKDeviceObjectPool(MVKDevice* device, bool isPooling = true) : MVKObjectPool<T>(isPooling), MVKDeviceTrackingMixin(device) {}
 
 protected:
-	MVKDevice* _device;
+	T* newObject() override { return new T(_device); }
+	MVKBaseObject* getBaseObject() override { return this; };
+
 };
 
 
@@ -956,6 +970,9 @@ protected:
 
 /** Returns the registry ID of the specified device, or zero if the device does not have a registry ID. */
 uint64_t mvkGetRegistryID(id<MTLDevice> mtlDevice);
+
+/** Returns whether the MTLDevice supports BC texture compression. */
+bool mvkSupportsBCTextureCompression(id<MTLDevice> mtlDevice);
 
 /** Redefinitions because Mac Catalyst doesn't support feature sets. */
 #if MVK_MACCAT

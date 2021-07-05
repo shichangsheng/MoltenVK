@@ -123,7 +123,7 @@ void MVKSwapchain::willPresentSurface(id<MTLTexture> mtlTexture, id<MTLCommandBu
 
 // If the product has not been fully licensed, renders the watermark image to the surface.
 void MVKSwapchain::renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffer> mtlCmdBuff) {
-    if (mvkGetMVKConfiguration()->displayWatermark) {
+    if (mvkConfig().displayWatermark) {
         if ( !_licenseWatermark ) {
             _licenseWatermark = new MVKWatermarkRandom(getMTLDevice(),
                                                        __watermarkTextureContent,
@@ -144,7 +144,7 @@ void MVKSwapchain::renderWatermark(id<MTLTexture> mtlTexture, id<MTLCommandBuffe
 
 // Calculates and remembers the time interval between frames.
 void MVKSwapchain::markFrameInterval() {
-	if ( !(mvkGetMVKConfiguration()->performanceTracking || _licenseWatermark) ) { return; }
+	if ( !(mvkConfig().performanceTracking || _licenseWatermark) ) { return; }
 
 	uint64_t prevFrameTime = _lastFrameTime;
 	_lastFrameTime = mvkGetTimestamp();
@@ -153,7 +153,7 @@ void MVKSwapchain::markFrameInterval() {
 
 	_device->addActivityPerformance(_device->_performanceStatistics.queue.frameInterval, prevFrameTime, _lastFrameTime);
 
-	uint32_t perfLogCntLimit = mvkGetMVKConfiguration()->performanceLoggingFrameCount;
+	uint32_t perfLogCntLimit = mvkConfig().performanceLoggingFrameCount;
 	if ((perfLogCntLimit > 0) && (++_currentPerfLogFrameCount >= perfLogCntLimit)) {
 		_currentPerfLogFrameCount = 0;
 		MVKLogInfo("Performance statistics reporting every: %d frames, avg FPS: %.2f, elapsed time: %.3f seconds:",
@@ -271,7 +271,7 @@ void MVKSwapchain::initCAMetalLayer(const VkSwapchainCreateInfoKHR* pCreateInfo,
 	_mtlLayer.pixelFormat = getPixelFormats()->getMTLPixelFormat(pCreateInfo->imageFormat);
 	_mtlLayer.maximumDrawableCountMVK = imgCnt;
 	_mtlLayer.displaySyncEnabledMVK = (pCreateInfo->presentMode != VK_PRESENT_MODE_IMMEDIATE_KHR);
-	_mtlLayer.magnificationFilter = mvkGetMVKConfiguration()->swapchainMagFilterUseNearest ? kCAFilterNearest : kCAFilterLinear;
+	_mtlLayer.magnificationFilter = mvkConfig().swapchainMagFilterUseNearest ? kCAFilterNearest : kCAFilterLinear;
 	_mtlLayer.framebufferOnly = !mvkIsAnyFlagEnabled(pCreateInfo->imageUsage, (VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
 																			   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
 																			   VK_IMAGE_USAGE_SAMPLED_BIT |
@@ -426,28 +426,34 @@ VkResult MVKSwapchain::getRefreshCycleDuration(VkRefreshCycleDurationGOOGLE *pRe
 VkResult MVKSwapchain::getPastPresentationTiming(uint32_t *pCount, VkPastPresentationTimingGOOGLE *pPresentationTimings) {
 	if (_device->getConfigurationResult() != VK_SUCCESS) { return _device->getConfigurationResult(); }
 
+	VkResult res = VK_SUCCESS;
+
 	std::lock_guard<std::mutex> lock(_presentHistoryLock);
-	if (pCount && pPresentationTimings == nullptr) {
+	if (pPresentationTimings == nullptr) {
 		*pCount = _presentHistoryCount;
-	} else if (pPresentationTimings) {
-		uint32_t index = _presentHistoryHeadIndex;
+	} else {
 		uint32_t countRemaining = std::min(_presentHistoryCount, *pCount);
 		uint32_t outIndex = 0;
+
+		res = (*pCount >= _presentHistoryCount) ? VK_SUCCESS : VK_INCOMPLETE;
+		*pCount = countRemaining;
+
 		while (countRemaining > 0) {
-			pPresentationTimings[outIndex] = _presentTimingHistory[index];
+			pPresentationTimings[outIndex] = _presentTimingHistory[_presentHistoryHeadIndex];
 			countRemaining--;
-			index = (index + 1) % kMaxPresentationHistory;
+			_presentHistoryCount--;
+			_presentHistoryHeadIndex = (_presentHistoryHeadIndex + 1) % kMaxPresentationHistory;
 			outIndex++;
 		}
 	}
-	return VK_SUCCESS;
+
+	return res;
 }
 
 void MVKSwapchain::recordPresentTime(MVKPresentTimingInfo presentTimingInfo, uint64_t actualPresentTime) {
 	std::lock_guard<std::mutex> lock(_presentHistoryLock);
 	if (_presentHistoryCount < kMaxPresentationHistory) {
 		_presentHistoryCount++;
-		_presentHistoryHeadIndex = 0;
 	} else {
 		_presentHistoryHeadIndex = (_presentHistoryHeadIndex + 1) % kMaxPresentationHistory;
 	}
@@ -464,9 +470,16 @@ void MVKSwapchain::recordPresentTime(MVKPresentTimingInfo presentTimingInfo, uin
 	_presentHistoryIndex = (_presentHistoryIndex + 1) % kMaxPresentationHistory;
 }
 
-MVKSwapchain::~MVKSwapchain() {
+// A retention loop exists between the swapchain and its images. The swapchain images
+// retain the swapchain because they can be in flight when the app destroys the swapchain.
+// Release the images now, when the app destroys the swapchain, so they will be destroyed when
+// no longer held by the presentation flow, and will in turn release the swapchain for destruction.
+void MVKSwapchain::destroy() {
 	for (auto& img : _presentableImages) { _device->destroyPresentableSwapchainImage(img, NULL); }
+	MVKVulkanAPIDeviceObject::destroy();
+}
 
+MVKSwapchain::~MVKSwapchain() {
     if (_licenseWatermark) { _licenseWatermark->destroy(); }
     [this->_layerObserver release];
 }

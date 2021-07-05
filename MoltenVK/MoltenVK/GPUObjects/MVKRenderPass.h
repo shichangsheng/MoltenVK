@@ -95,7 +95,9 @@ public:
 	 */
 	void populateMTLRenderPassDescriptor(MTLRenderPassDescriptor* mtlRPDesc,
 										 uint32_t passIdx,
-										 MVKFramebuffer* framebuffer,
+										 VkExtent2D framebufferExtent,
+										 uint32_t framebufferLayerCount,
+										 const MVKArrayRef<MVKImageView*>& attachments,
 										 const MVKArrayRef<VkClearValue>& clearValues,
 										 bool isRenderingEntireAttachment,
                                          bool loadOverride = false);
@@ -117,7 +119,10 @@ public:
 									 uint32_t caIdx, VkImageAspectFlags aspectMask);
 
 	/** If a render encoder is active, sets the store actions for all attachments to it. */
-	void encodeStoreActions(MVKCommandEncoder* cmdEncoder, bool isRenderingEntireAttachment, bool storeOverride = false);
+	void encodeStoreActions(MVKCommandEncoder* cmdEncoder,
+							bool isRenderingEntireAttachment,
+							const MVKArrayRef<MVKImageView*>& attachments,
+							bool storeOverride = false);
 
 	/** Constructs an instance for the specified parent renderpass. */
 	MVKRenderSubpass(MVKRenderPass* renderPass, const VkSubpassDescription* pCreateInfo,
@@ -195,6 +200,9 @@ public:
 
     /** Returns whether this attachment should be cleared in the subpass. */
     bool shouldUseClearAttachment(MVKRenderSubpass* subpass);
+
+    /** If this is a depth attachment, the stencil load op may be different than the depth load op. */
+	VkAttachmentLoadOp getAttachmentStencilLoadOp() const;
 
 	/** Constructs an instance for the specified parent renderpass. */
 	MVKRenderPassAttachment(MVKRenderPass* renderPass,

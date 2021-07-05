@@ -60,8 +60,10 @@ static void mvkInitConfigFromEnvVars() {
 	MVK_SET_FROM_ENV_OR_BUILD_BOOL  (evCfg.useMTLHeap,                             MVK_CONFIG_USE_MTLHEAP);
 	MVK_SET_FROM_ENV_OR_BUILD_INT32 (evCfg.apiVersionToAdvertise,                  MVK_CONFIG_API_VERSION_TO_ADVERTISE);
 	MVK_SET_FROM_ENV_OR_BUILD_INT32 (evCfg.advertiseExtensions,                    MVK_CONFIG_ADVERTISE_EXTENSIONS);
+	MVK_SET_FROM_ENV_OR_BUILD_BOOL  (evCfg.resumeLostDevice,                       MVK_CONFIG_RESUME_LOST_DEVICE);
+	MVK_SET_FROM_ENV_OR_BUILD_BOOL  (evCfg.useMetalArgumentBuffers,                MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS);
 
-	mvkSetMVKConfiguration(&evCfg);
+	mvkSetConfig(evCfg);
 }
 
 static MVKConfiguration _mvkConfig;
@@ -70,18 +72,18 @@ static std::string _autoGPUCaptureOutputFile;
 // Returns the MoltenVK config, lazily initializing it if necessary.
 // We initialize lazily instead of in a library constructor function to
 // ensure the NSProcessInfo environment is available when called upon.
-const MVKConfiguration* mvkGetMVKConfiguration() {
+const MVKConfiguration& mvkConfig() {
 	if ( !_mvkConfigInitialized ) {
 		mvkInitConfigFromEnvVars();
 	}
-	return &_mvkConfig;
+	return _mvkConfig;
 }
 
 // Sets config content, and updates any content that needs baking, including copying the contents
 // of strings from the incoming MVKConfiguration member to a corresponding std::string, and then
 // repointing the MVKConfiguration member to the contents of the std::string.
-void mvkSetMVKConfiguration(MVKConfiguration* pMVKConfig) {
-	_mvkConfig = *pMVKConfig;
+void mvkSetConfig(const MVKConfiguration& mvkConfig) {
+	_mvkConfig = mvkConfig;
 
 	// Ensure the API version is supported, and add the VK_HEADER_VERSION.
 	_mvkConfig.apiVersionToAdvertise = std::min(_mvkConfig.apiVersionToAdvertise, MVK_VULKAN_API_VERSION);

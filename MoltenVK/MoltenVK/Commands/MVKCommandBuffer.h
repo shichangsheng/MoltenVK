@@ -47,6 +47,16 @@ typedef uint64_t MVKMTLCommandBufferID;
 
 
 #pragma mark -
+#pragma mark MVKCommandEncodingContext
+
+/** Context for tracking information across multiple encodings. */
+typedef struct MVKCommandEncodingContext {
+	NSUInteger mtlVisibilityResultOffset = 0;
+	const MVKMTLBufferAllocation* visibilityResultBuffer = nullptr;
+} MVKCommandEncodingContext;
+
+
+#pragma mark -
 #pragma mark MVKCommandBuffer
 
 /** Represents a Vulkan command pool. */
@@ -83,7 +93,7 @@ public:
 	inline MVKCommandPool* getCommandPool() { return _commandPool; }
 
 	/** Submit the commands in this buffer as part of the queue submission. */
-	void submit(MVKQueueCommandBufferSubmission* cmdBuffSubmit);
+	void submit(MVKQueueCommandBufferSubmission* cmdBuffSubmit, MVKCommandEncodingContext* pEncodingContext);
 
     /** Returns whether this command buffer can be submitted to a queue more than once. */
     inline bool getIsReusable() { return _isReusable; }
@@ -264,7 +274,7 @@ public:
 	MVKVulkanAPIObject* getVulkanAPIObject() override { return _cmdBuffer->getVulkanAPIObject(); };
 
 	/** Encode commands from the command buffer onto the Metal command buffer. */
-	void encode(id<MTLCommandBuffer> mtlCmdBuff);
+	void encode(id<MTLCommandBuffer> mtlCmdBuff, MVKCommandEncodingContext* pEncodingContext);
 
 	/** Encode commands from the specified secondary command buffer onto the Metal command buffer. */
 	void encodeSecondary(MVKCommandBuffer* secondaryCmdBuffer);
@@ -273,9 +283,11 @@ public:
 	void beginRenderpass(MVKCommand* passCmd,
 						 VkSubpassContents subpassContents,
 						 MVKRenderPass* renderPass,
-						 MVKFramebuffer* framebuffer,
+						 VkExtent2D framebufferExtent,
+						 uint32_t framebufferLayerCount,
 						 VkRect2D& renderArea,
-						 MVKArrayRef<VkClearValue> clearValues);
+						 MVKArrayRef<VkClearValue> clearValues,
+						 MVKArrayRef<MVKImageView*> attachments);
 
 	/** Begins the next render subpass. */
 	void beginNextSubpass(MVKCommand* subpassCmd, VkSubpassContents renderpassContents);
@@ -298,8 +310,19 @@ public:
 	/** Returns the index of the currently active multiview subpass, or zero if the current render pass is not multiview. */
 	uint32_t getMultiviewPassIndex();
 
+	/** Begins a Metal compute encoding. */
+	void beginMetalComputeEncoding(MVKCommandUse cmdUse);
+
     /** Binds a pipeline to a bind point. */
     void bindPipeline(VkPipelineBindPoint pipelineBindPoint, MVKPipeline* pipeline);
+
+	/** Binds the descriptor set to the index at the bind point. */
+	void bindDescriptorSet(VkPipelineBindPoint pipelineBindPoint,
+						   uint32_t descSetIndex,
+						   MVKDescriptorSet* descSet,
+						   MVKShaderResourceBinding& dslMTLRezIdxOffsets,
+						   MVKArrayRef<uint32_t> dynamicOffsets,
+						   uint32_t& dynamicOffsetIndex);
 
 	/** Encodes an operation to signal an event to a status. */
 	void signalEvent(MVKEvent* mvkEvent, bool status);
@@ -372,6 +395,9 @@ public:
     /** Get a temporary MTLBuffer that will be returned to a pool after the command buffer is finished. */
     const MVKMTLBufferAllocation* getTempMTLBuffer(NSUInteger length, bool isPrivate = false, bool isDedicated = false);
 
+	/** Copy the bytes to a temporary MTLBuffer that will be returned to a pool after the command buffer is finished. */
+	const MVKMTLBufferAllocation* copyToTempMTLBufferAllocation(const void* bytes, NSUInteger length, bool isDedicated = false);
+
     /** Returns the command encoding pool. */
     MVKCommandEncodingPool* getCommandEncodingPool();
 
@@ -391,6 +417,9 @@ public:
 
 #pragma mark Dynamic encoding state accessed directly
 
+	/** Context for tracking information across multiple encodings. */
+	MVKCommandEncodingContext* _pEncodingContext;
+
     /** A reference to the Metal features supported by the device. */
     const MVKPhysicalDeviceMetalFeatures* _pDeviceMetalFeatures;
 
@@ -406,17 +435,11 @@ public:
 	/** The command buffer whose commands are being encoded. */
 	MVKCommandBuffer* _cmdBuffer;
 
-	/** The framebuffer to which rendering is currently directed. */
-	MVKFramebuffer* _framebuffer;
-
 	/** The current Metal command buffer. */
 	id<MTLCommandBuffer> _mtlCmdBuffer;
 
 	/** The current Metal render encoder. */
 	id<MTLRenderCommandEncoder> _mtlRenderEncoder;
-
-	/** The buffer used to hold occlusion query results in a render pass. */
-	const MVKMTLBufferAllocation* _visibilityResultMTLBuffer;
 
     /** Tracks the current graphics pipeline bound to the encoder. */
     MVKPipelineCommandEncoderState _graphicsPipelineState;
@@ -460,6 +483,11 @@ public:
 	/** Indicates whether the current draw is an indexed draw. */
 	bool _isIndexedDraw;
 
+	/** The extent of current framebuffer.*/
+	VkExtent2D _framebufferExtent;
+
+	/** The layer count of current framebuffer.*/
+	uint32_t _framebufferLayerCount;
 
 #pragma mark Construction
 
@@ -470,7 +498,6 @@ protected:
     void finishQueries();
 	void setSubpass(MVKCommand* passCmd, VkSubpassContents subpassContents, uint32_t subpassIndex);
 	void clearRenderArea();
-    const MVKMTLBufferAllocation* copyToTempMTLBufferAllocation(const void* bytes, NSUInteger length);
     NSString* getMTLRenderCommandEncoderName();
 
 	VkSubpassContents _subpassContents;
@@ -481,6 +508,7 @@ protected:
 	VkRect2D _renderArea;
     MVKActivatedQueries* _pActivatedQueries;
 	MVKSmallVector<VkClearValue, kMVKDefaultAttachmentCount> _clearValues;
+	MVKSmallVector<MVKImageView*, kMVKDefaultAttachmentCount> _attachments;
 	id<MTLComputeCommandEncoder> _mtlComputeEncoder;
 	MVKCommandUse _mtlComputeEncoderUse;
 	id<MTLBlitCommandEncoder> _mtlBlitEncoder;
@@ -499,6 +527,9 @@ protected:
 #pragma mark -
 #pragma mark Support functions
 
+/** Returns a name, suitable for use as a MTLCommandBuffer label, based on the MVKCommandUse. */
+NSString* mvkMTLCommandBufferLabel(MVKCommandUse cmdUse);
+
 /** Returns a name, suitable for use as a MTLRenderCommandEncoder label, based on the MVKCommandUse. */
 NSString* mvkMTLRenderCommandEncoderLabel(MVKCommandUse cmdUse);
 
@@ -507,4 +538,3 @@ NSString* mvkMTLBlitCommandEncoderLabel(MVKCommandUse cmdUse);
 
 /** Returns a name, suitable for use as a MTLComputeCommandEncoder label, based on the MVKCommandUse. */
 NSString* mvkMTLComputeCommandEncoderLabel(MVKCommandUse cmdUse);
-

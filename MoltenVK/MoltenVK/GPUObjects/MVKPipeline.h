@@ -23,6 +23,7 @@
 #include "MVKShaderModule.h"
 #include "MVKSync.h"
 #include "MVKSmallVector.h"
+#include "MVKBitArray.h"
 #include <MoltenVKShaderConverter/SPIRVReflection.h>
 #include <MoltenVKShaderConverter/SPIRVToMSLConverter.h>
 #include <unordered_map>
@@ -39,7 +40,7 @@ class MVKPipelineCache;
 #pragma mark MVKPipelineLayout
 
 struct MVKShaderImplicitRezBinding {
-	uint32_t stages[kMVKShaderStageMax];
+	uint32_t stages[kMVKShaderStageCount];
 };
 
 /** Represents a Vulkan pipeline layout. */
@@ -55,6 +56,7 @@ public:
 
 	/** Binds descriptor sets to a command encoder. */
     void bindDescriptorSets(MVKCommandEncoder* cmdEncoder,
+							VkPipelineBindPoint pipelineBindPoint,
                             MVKArrayRef<MVKDescriptorSet*> descriptorSets,
                             uint32_t firstSet,
                             MVKArrayRef<uint32_t> dynamicOffsets);
@@ -70,14 +72,17 @@ public:
 						   uint32_t set,
 						   const void* pData);
 
-	/** Populates the specified shader converter context. */
-	void populateShaderConverterContext(SPIRVToMSLConversionConfiguration& context);
+	/** Populates the specified shader conversion config. */
+	void populateShaderConversionConfig(SPIRVToMSLConversionConfiguration& shaderConfig);
 
 	/** Returns the current swizzle buffer bindings. */
 	const MVKShaderImplicitRezBinding& getSwizzleBufferIndex() { return _swizzleBufferIndex; }
 
 	/** Returns the current buffer size buffer bindings. */
 	const MVKShaderImplicitRezBinding& getBufferSizeBufferIndex() { return _bufferSizeBufferIndex; }
+
+	/** Returns the current dynamic buffer offset buffer bindings. */
+	const MVKShaderImplicitRezBinding& getDynamicOffsetBufferIndex() { return _dynamicOffsetBufferIndex; }
 
 	/** Returns the current view range buffer binding for multiview draws. */
 	const MVKShaderImplicitRezBinding& getViewRangeBufferIndex() { return _viewRangeBufferIndex; }
@@ -100,6 +105,15 @@ public:
 	/** Returns the number of buffers in this layout. This is used to calculate the size of the buffer size buffer. */
 	uint32_t getBufferCount() { return _pushConstantsMTLResourceIndexes.getMaxBufferIndex(); }
 
+	/** Returns the number of descriptor sets in this pipeline layout. */
+	uint32_t getDescriptorSetCount() { return (uint32_t)_descriptorSetLayouts.size(); }
+
+	/** Returns the number of descriptors in the descriptor set layout. */
+	uint32_t getDescriptorCount(uint32_t descSetIndex) { return getDescriptorSetLayout(descSetIndex)->getDescriptorCount(); }
+
+	/** Returns the descriptor set layout. */
+	MVKDescriptorSetLayout* getDescriptorSetLayout(uint32_t descSetIndex) { return _descriptorSetLayouts[descSetIndex]; }
+
 	/** Returns the push constant binding info. */
 	const MVKShaderResourceBinding& getPushConstantBindings() { return _pushConstantsMTLResourceIndexes; }
 
@@ -109,6 +123,8 @@ public:
 	~MVKPipelineLayout() override;
 
 protected:
+	friend class MVKPipeline;
+
 	void propagateDebugName() override {}
 
 	MVKSmallVector<MVKDescriptorSetLayout*, 1> _descriptorSetLayouts;
@@ -117,6 +133,7 @@ protected:
 	MVKShaderResourceBinding _pushConstantsMTLResourceIndexes;
 	MVKShaderImplicitRezBinding _swizzleBufferIndex;
 	MVKShaderImplicitRezBinding _bufferSizeBufferIndex;
+	MVKShaderImplicitRezBinding _dynamicOffsetBufferIndex;
 	MVKShaderImplicitRezBinding _viewRangeBufferIndex;
 	MVKShaderImplicitRezBinding _indirectParamsIndex;
 	MVKShaderImplicitRezBinding _outputBufferIndex;
@@ -153,12 +170,6 @@ public:
 	/** Binds the push constants to a command encoder. */
 	void bindPushConstants(MVKCommandEncoder* cmdEncoder);
 
-	/** Returns the current swizzle buffer bindings. */
-	const MVKShaderImplicitRezBinding& getSwizzleBufferIndex() { return _swizzleBufferIndex; }
-
-	/** Returns the current buffer size buffer bindings. */
-	const MVKShaderImplicitRezBinding& getBufferSizeBufferIndex() { return _bufferSizeBufferIndex; }
-
 	/** Returns the current indirect parameter buffer bindings. */
 	const MVKShaderImplicitRezBinding& getIndirectParamsIndex() { return _indirectParamsIndex; }
 
@@ -168,17 +179,32 @@ public:
 	/** Returns whether all internal Metal pipeline states are valid. */
 	bool hasValidMTLPipelineStates() { return _hasValidMTLPipelineStates; }
 
+	/** Returns the MTLArgumentEncoder for the descriptor set. */
+	virtual MVKMTLArgumentEncoder& getMTLArgumentEncoder(uint32_t descSetIndex, MVKShaderStage stage) = 0;
+
+	/** Returns the array of descriptor binding use for the descriptor set. */
+	virtual MVKBitArray& getDescriptorBindingUse(uint32_t descSetIndex, MVKShaderStage stage) = 0;
+
+	/** Returns the number of descriptor sets in this pipeline layout. */
+	uint32_t getDescriptorSetCount() { return _descriptorSetCount; }
+
 	/** Constructs an instance for the device. layout, and parent (which may be NULL). */
 	MVKPipeline(MVKDevice* device, MVKPipelineCache* pipelineCache, MVKPipelineLayout* layout, MVKPipeline* parent);
 
 protected:
 	void propagateDebugName() override {}
+	template<typename CreateInfo> void addMTLArgumentEncoders(MVKMTLFunction& mvkMTLFunc,
+															  const CreateInfo* pCreateInfo,
+															  SPIRVToMSLConversionConfiguration& shaderConfig,
+															  MVKShaderStage stage);
 
 	MVKPipelineCache* _pipelineCache;
 	MVKShaderImplicitRezBinding _swizzleBufferIndex;
 	MVKShaderImplicitRezBinding _bufferSizeBufferIndex;
+	MVKShaderImplicitRezBinding _dynamicOffsetBufferIndex;
 	MVKShaderImplicitRezBinding _indirectParamsIndex;
 	MVKShaderResourceBinding _pushConstantsMTLResourceIndexes;
+	uint32_t _descriptorSetCount;
 	bool _fullImageViewSwizzle;
 	bool _hasValidMTLPipelineStates = true;
 
@@ -199,6 +225,14 @@ struct MVKTranslatedVertexBinding {
 typedef std::pair<uint32_t, uint32_t> MVKZeroDivisorVertexBinding;
 
 typedef MVKSmallVector<MVKGraphicsStage, 4> MVKPiplineStages;
+
+struct MVKStagedMTLArgumentEncoders {
+	MVKMTLArgumentEncoder stages[4] = {};
+};
+
+struct MVKStagedDescriptorBindingUse {
+	MVKBitArray stages[4] = {};
+};
 
 /** The number of dynamic states possible in Vulkan. */
 static const uint32_t kMVKVkDynamicStateCount = 32;
@@ -265,6 +299,12 @@ public:
 	/** Returns the collection of instance-rate vertex bindings whose divisor is zero, along with their strides. */
 	MVKArrayRef<MVKZeroDivisorVertexBinding> getZeroDivisorVertexBindings() { return _zeroDivisorVertexBindings.contents(); }
 
+	/** Returns the MTLArgumentEncoder for the descriptor set. */
+	MVKMTLArgumentEncoder& getMTLArgumentEncoder(uint32_t descSetIndex, MVKShaderStage stage) override { return _mtlArgumentEncoders[descSetIndex].stages[stage]; }
+
+	/** Returns the array of descriptor binding use for the descriptor set. */
+	MVKBitArray& getDescriptorBindingUse(uint32_t descSetIndex, MVKShaderStage stage) override { return _descriptorBindingUse[descSetIndex].stages[stage]; }
+
 	/** Constructs an instance for the device and parent (which may be NULL). */
 	MVKGraphicsPipeline(MVKDevice* device,
 						MVKPipelineCache* pipelineCache,
@@ -279,20 +319,20 @@ protected:
     id<MTLRenderPipelineState> getOrCompilePipeline(MTLRenderPipelineDescriptor* plDesc, id<MTLRenderPipelineState>& plState);
     id<MTLComputePipelineState> getOrCompilePipeline(MTLComputePipelineDescriptor* plDesc, id<MTLComputePipelineState>& plState, const char* compilerType);
     void initMTLRenderPipelineState(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData);
-    void initMVKShaderConverterContext(SPIRVToMSLConversionConfiguration& _shaderContext, const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData);
-    void addVertexInputToShaderConverterContext(SPIRVToMSLConversionConfiguration& shaderContext, const VkGraphicsPipelineCreateInfo* pCreateInfo);
-    void addPrevStageOutputToShaderConverterContext(SPIRVToMSLConversionConfiguration& shaderContext, SPIRVShaderOutputs& outputs);
+    void initShaderConversionConfig(SPIRVToMSLConversionConfiguration& shaderConfig, const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData);
+    void addVertexInputToShaderConversionConfig(SPIRVToMSLConversionConfiguration& shaderConfig, const VkGraphicsPipelineCreateInfo* pCreateInfo);
+    void addPrevStageOutputToShaderConversionConfig(SPIRVToMSLConversionConfiguration& shaderConfig, SPIRVShaderOutputs& outputs);
     MTLRenderPipelineDescriptor* newMTLRenderPipelineDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData);
-    MTLComputePipelineDescriptor* newMTLTessVertexStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderContext);
-	MTLComputePipelineDescriptor* newMTLTessControlStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderContext);
-	MTLRenderPipelineDescriptor* newMTLTessRasterStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderContext);
-	bool addVertexShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderContext);
-	bool addVertexShaderToPipeline(MTLComputePipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderContext);
-	bool addTessCtlShaderToPipeline(MTLComputePipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderContext, SPIRVShaderOutputs& prevOutput);
-	bool addTessEvalShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderContext, SPIRVShaderOutputs& prevOutput);
-    bool addFragmentShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderContext, SPIRVShaderOutputs& prevOutput);
+    MTLComputePipelineDescriptor* newMTLTessVertexStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderConfig);
+	MTLComputePipelineDescriptor* newMTLTessControlStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderConfig);
+	MTLRenderPipelineDescriptor* newMTLTessRasterStageDescriptor(const VkGraphicsPipelineCreateInfo* pCreateInfo, const SPIRVTessReflectionData& reflectData, SPIRVToMSLConversionConfiguration& shaderConfig);
+	bool addVertexShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderConfig);
+	bool addVertexShaderToPipeline(MTLComputePipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderConfig);
+	bool addTessCtlShaderToPipeline(MTLComputePipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderConfig, SPIRVShaderOutputs& prevOutput);
+	bool addTessEvalShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderConfig, SPIRVShaderOutputs& prevOutput);
+    bool addFragmentShaderToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo, SPIRVToMSLConversionConfiguration& shaderConfig, SPIRVShaderOutputs& prevOutput);
 	template<class T>
-	bool addVertexInputToPipeline(T* inputDesc, const VkPipelineVertexInputStateCreateInfo* pVI, const SPIRVToMSLConversionConfiguration& shaderContext);
+	bool addVertexInputToPipeline(T* inputDesc, const VkPipelineVertexInputStateCreateInfo* pVI, const SPIRVToMSLConversionConfiguration& shaderConfig);
 	void adjustVertexInputForMultiview(MTLVertexDescriptor* inputDesc, const VkPipelineVertexInputStateCreateInfo* pVI, uint32_t viewCount, uint32_t oldViewCount = 1);
     void addTessellationToPipeline(MTLRenderPipelineDescriptor* plDesc, const SPIRVTessReflectionData& reflectData, const VkPipelineTessellationStateCreateInfo* pTS);
     void addFragmentOutputToPipeline(MTLRenderPipelineDescriptor* plDesc, const VkGraphicsPipelineCreateInfo* pCreateInfo);
@@ -314,6 +354,8 @@ protected:
 	MVKSmallVector<VkRect2D, kMVKCachedViewportScissorCount> _scissors;
 	MVKSmallVector<MVKTranslatedVertexBinding> _translatedVertexBindings;
 	MVKSmallVector<MVKZeroDivisorVertexBinding> _zeroDivisorVertexBindings;
+	MVKSmallVector<MVKStagedMTLArgumentEncoders> _mtlArgumentEncoders;
+	MVKSmallVector<MVKStagedDescriptorBindingUse> _descriptorBindingUse;
 
 	MTLComputePipelineDescriptor* _mtlTessVertexStageDesc = nil;
 	id<MTLFunction> _mtlTessVertexFunctions[3] = {nil, nil, nil};
@@ -340,17 +382,21 @@ protected:
 	bool _dynamicStateEnabled[kMVKVkDynamicStateCount];
 	bool _needsVertexSwizzleBuffer = false;
 	bool _needsVertexBufferSizeBuffer = false;
+	bool _needsVertexDynamicOffsetBuffer = false;
 	bool _needsVertexViewRangeBuffer = false;
 	bool _needsVertexOutputBuffer = false;
 	bool _needsTessCtlSwizzleBuffer = false;
 	bool _needsTessCtlBufferSizeBuffer = false;
+	bool _needsTessCtlDynamicOffsetBuffer = false;
 	bool _needsTessCtlOutputBuffer = false;
 	bool _needsTessCtlPatchOutputBuffer = false;
 	bool _needsTessCtlInputBuffer = false;
 	bool _needsTessEvalSwizzleBuffer = false;
 	bool _needsTessEvalBufferSizeBuffer = false;
+	bool _needsTessEvalDynamicOffsetBuffer = false;
 	bool _needsFragmentSwizzleBuffer = false;
 	bool _needsFragmentBufferSizeBuffer = false;
+	bool _needsFragmentDynamicOffsetBuffer = false;
 	bool _needsFragmentViewRangeBuffer = false;
 };
 
@@ -369,6 +415,12 @@ public:
 	/** Returns if this pipeline allows non-zero dispatch bases in vkCmdDispatchBase(). */
 	bool allowsDispatchBase() { return _allowsDispatchBase; }
 
+	/** Returns the MTLArgumentEncoder for the descriptor set. */
+	MVKMTLArgumentEncoder& getMTLArgumentEncoder(uint32_t descSetIndex, MVKShaderStage stage) override { return _mtlArgumentEncoders[descSetIndex]; }
+
+	/** Returns the array of descriptor binding use for the descriptor set. */
+	MVKBitArray& getDescriptorBindingUse(uint32_t descSetIndex, MVKShaderStage stage) override { return _descriptorBindingUse[descSetIndex]; }
+
 	/** Constructs an instance for the device and parent (which may be NULL). */
 	MVKComputePipeline(MVKDevice* device,
 					   MVKPipelineCache* pipelineCache,
@@ -381,9 +433,12 @@ protected:
     MVKMTLFunction getMTLFunction(const VkComputePipelineCreateInfo* pCreateInfo);
 
     id<MTLComputePipelineState> _mtlPipelineState;
+	MVKSmallVector<MVKMTLArgumentEncoder> _mtlArgumentEncoders;
+	MVKSmallVector<MVKBitArray> _descriptorBindingUse;
     MTLSize _mtlThreadgroupSize;
     bool _needsSwizzleBuffer = false;
     bool _needsBufferSizeBuffer = false;
+	bool _needsDynamicOffsetBuffer = false;
     bool _needsDispatchBaseBuffer = false;
     bool _allowsDispatchBase = false;
 };
@@ -410,7 +465,7 @@ public:
 	 */
 	VkResult writeData(size_t* pDataSize, void* pData);
 
-	/** Return a shader library from the specified shader context sourced from the specified shader module. */
+	/** Return a shader library from the shader conversion configuration and sourced from the specified shader module. */
 	MVKShaderLibrary* getShaderLibrary(SPIRVToMSLConversionConfiguration* pContext, MVKShaderModule* shaderModule);
 
 	/** Merges the contents of the specified number of pipeline caches into this cache. */

@@ -44,6 +44,7 @@ id<MTLTexture> MVKImagePlane::getMTLTexture() {
 
         MTLTextureDescriptor* mtlTexDesc = newMTLTextureDescriptor();    // temp retain
         MVKImageMemoryBinding* memoryBinding = getMemoryBinding();
+		MVKDeviceMemory* dvcMem = memoryBinding->_deviceMemory;
 
         if (_image->_ioSurface) {
             _mtlTexture = [_image->getMTLDevice()
@@ -55,19 +56,19 @@ id<MTLTexture> MVKImagePlane::getMTLTexture() {
                            newTextureWithDescriptor: mtlTexDesc
                            offset: memoryBinding->_mtlTexelBufferOffset + _subresources[0].layout.offset
                            bytesPerRow: _subresources[0].layout.rowPitch];
-        } else if (memoryBinding->_deviceMemory->getMTLHeap() && !_image->getIsDepthStencil()) {
+        } else if (dvcMem && dvcMem->getMTLHeap() && !_image->getIsDepthStencil()) {
             // Metal support for depth/stencil from heaps is flaky
-            _mtlTexture = [memoryBinding->_deviceMemory->getMTLHeap()
+            _mtlTexture = [dvcMem->getMTLHeap()
                            newTextureWithDescriptor: mtlTexDesc
                            offset: memoryBinding->getDeviceMemoryOffset() + _subresources[0].layout.offset];
             if (_image->_isAliasable) { [_mtlTexture makeAliasable]; }
-        } else if (_image->_isAliasable && memoryBinding->_deviceMemory->isDedicatedAllocation() &&
-            !contains(memoryBinding->_deviceMemory->_imageMemoryBindings, memoryBinding)) {
+        } else if (_image->_isAliasable && dvcMem && dvcMem->isDedicatedAllocation() &&
+            !contains(dvcMem->_imageMemoryBindings, memoryBinding)) {
             // This is a dedicated allocation, but it belongs to another aliasable image.
             // In this case, use the MTLTexture from the memory's dedicated image.
             // We know the other image must be aliasable, or I couldn't have been bound
             // to its memory: the memory object wouldn't allow it.
-            _mtlTexture = [memoryBinding->_deviceMemory->_imageMemoryBindings[0]->_image->getMTLTexture(_planeIndex, mtlTexDesc.pixelFormat) retain];
+            _mtlTexture = [dvcMem->_imageMemoryBindings[0]->_image->getMTLTexture(_planeIndex, mtlTexDesc.pixelFormat) retain];
         } else {
             _mtlTexture = [_image->getMTLDevice() newTextureWithDescriptor: mtlTexDesc];
         }
@@ -647,12 +648,14 @@ VkResult MVKImage::getMemoryRequirements(VkMemoryRequirements* pMemoryRequiremen
         mvkDisableFlags(pMemoryRequirements->memoryTypeBits, getPhysicalDevice()->getHostCoherentMemoryTypes());
     }
 #endif
-#if MVK_APPLE_SILICON
-    // Only transient attachments may use memoryless storage
-    if (!mvkAreAllFlagsEnabled(_usage, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) ) {
+    // Only transient attachments may use memoryless storage.
+	// Using memoryless as an input attachment requires shader framebuffer fetch, which MoltenVK does not support yet.
+	// TODO: support framebuffer fetch so VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT uses color(m) in shader instead of setFragmentTexture:, which crashes Metal
+    if (!mvkIsAnyFlagEnabled(_usage, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) ||
+		 mvkIsAnyFlagEnabled(_usage, VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) ) {
         mvkDisableFlags(pMemoryRequirements->memoryTypeBits, getPhysicalDevice()->getLazilyAllocatedMemoryTypes());
     }
-#endif
+
     return _memoryBindings[planeIndex]->getMemoryRequirements(pMemoryRequirements);
 }
 
@@ -983,7 +986,7 @@ VkSampleCountFlagBits MVKImage::validateSamples(const VkImageCreateInfo* pCreate
 	if (validSamples == VK_SAMPLE_COUNT_1_BIT) { return validSamples; }
 
 	// Don't use getImageType() because it hasn't been set yet.
-	if ( !((pCreateInfo->imageType == VK_IMAGE_TYPE_2D) || ((pCreateInfo->imageType == VK_IMAGE_TYPE_1D) && mvkGetMVKConfiguration()->texture1DAs2D)) ) {
+	if ( !((pCreateInfo->imageType == VK_IMAGE_TYPE_2D) || ((pCreateInfo->imageType == VK_IMAGE_TYPE_1D) && mvkConfig().texture1DAs2D)) ) {
 		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateImage() : Under Metal, multisampling can only be used with a 2D image type. Setting sample count to 1."));
 		validSamples = VK_SAMPLE_COUNT_1_BIT;
 	}
@@ -1101,7 +1104,7 @@ bool MVKImage::validateLinear(const VkImageCreateInfo* pCreateInfo, bool isAttac
 		isLin = false;
 	}
 
-#if MVK_MACOS
+#if !MVK_APPLE_SILICON
 	if (isAttachment) {
 		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateImage() : This device does not support rendering to linear (VK_IMAGE_TILING_LINEAR) images."));
 		isLin = false;
@@ -1209,7 +1212,7 @@ void MVKPresentableSwapchainImage::acquireAndSignalWhenAvailable(MVKSemaphore* s
 		@autoreleasepool {
 			MVKSemaphore* mvkSem = signaler.semaphore;
 			id<MTLCommandBuffer> mtlCmdBuff = (mvkSem && mvkSem->isUsingCommandEncoding()
-											   ? _device->getAnyQueue()->getMTLCommandBuffer()
+											   ? _device->getAnyQueue()->getMTLCommandBuffer(kMVKCommandUseAcquireNextImage)
 											   : nil);
 			signal(signaler, mtlCmdBuff);
 			[mtlCmdBuff commit];
@@ -1476,7 +1479,7 @@ MVKImageViewPlane::MVKImageViewPlane(MVKImageView* imageView,
 																				  _imageView->_usage,
 																				  _imageView,
 																				  _device->_pMetalFeatures->nativeTextureSwizzle,
-																				  mvkGetMVKConfiguration()->fullImageViewSwizzle,
+																				  mvkConfig().fullImageViewSwizzle,
 																				  _mtlPixFmt,
 																				  useSwizzle));
     _packedSwizzle = (useSwizzle) ? mvkPackSwizzle(pCreateInfo->components) : 0;
@@ -1908,16 +1911,29 @@ bool MVKSampler::getConstexprSampler(mvk::MSLResourceBinding& resourceBinding) {
 	return _requiresConstExprSampler;
 }
 
+// Ensure available Metal features.
+MTLSamplerAddressMode MVKSampler::getMTLSamplerAddressMode(VkSamplerAddressMode vkMode) {
+	if ((vkMode == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && !_device->_pMetalFeatures->samplerClampToBorder) ||
+		(vkMode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE && !_device->_pMetalFeatures->samplerMirrorClampToEdge)) {
+		return MTLSamplerAddressModeClampToZero;
+	}
+	return mvkMTLSamplerAddressModeFromVkSamplerAddressMode(vkMode);
+}
+
 // Returns an Metal sampler descriptor constructed from the properties of this image.
 // It is the caller's responsibility to release the returned descriptor object.
 MTLSamplerDescriptor* MVKSampler::newMTLSamplerDescriptor(const VkSamplerCreateInfo* pCreateInfo) {
 
 	MTLSamplerDescriptor* mtlSampDesc = [MTLSamplerDescriptor new];		// retained
-	mtlSampDesc.sAddressMode = mvkMTLSamplerAddressModeFromVkSamplerAddressMode(pCreateInfo->addressModeU);
-	mtlSampDesc.tAddressMode = mvkMTLSamplerAddressModeFromVkSamplerAddressMode(pCreateInfo->addressModeV);
+	mtlSampDesc.sAddressMode = getMTLSamplerAddressMode(pCreateInfo->addressModeU);
+	mtlSampDesc.tAddressMode = getMTLSamplerAddressMode(pCreateInfo->addressModeV);
     if (!pCreateInfo->unnormalizedCoordinates) {
-        mtlSampDesc.rAddressMode = mvkMTLSamplerAddressModeFromVkSamplerAddressMode(pCreateInfo->addressModeW);
+        mtlSampDesc.rAddressMode = getMTLSamplerAddressMode(pCreateInfo->addressModeW);
     }
+#if MVK_MACOS_OR_IOS
+	mtlSampDesc.borderColorMVK = mvkMTLSamplerBorderColorFromVkBorderColor(pCreateInfo->borderColor);
+#endif
+
 	mtlSampDesc.minFilter = mvkMTLSamplerMinMagFilterFromVkFilter(pCreateInfo->minFilter);
 	mtlSampDesc.magFilter = mvkMTLSamplerMinMagFilterFromVkFilter(pCreateInfo->magFilter);
     mtlSampDesc.mipFilter = (pCreateInfo->unnormalizedCoordinates
@@ -1929,6 +1945,7 @@ MTLSamplerDescriptor* MVKSampler::newMTLSamplerDescriptor(const VkSamplerCreateI
 								 ? mvkClamp(pCreateInfo->maxAnisotropy, 1.0f, _device->_pProperties->limits.maxSamplerAnisotropy)
 								 : 1);
 	mtlSampDesc.normalizedCoordinates = !pCreateInfo->unnormalizedCoordinates;
+	mtlSampDesc.supportArgumentBuffers = isUsingMetalArgumentBuffers();
 
 	// If compareEnable is true, but dynamic samplers with depth compare are not available
 	// on this device, this sampler must only be used as an immutable sampler, and will
@@ -1938,20 +1955,6 @@ MTLSamplerDescriptor* MVKSampler::newMTLSamplerDescriptor(const VkSamplerCreateI
 		mtlSampDesc.compareFunctionMVK = mvkMTLCompareFunctionFromVkCompareOp(pCreateInfo->compareOp);
 	}
 
-#if MVK_MACOS_OR_IOS
-	mtlSampDesc.borderColorMVK = mvkMTLSamplerBorderColorFromVkBorderColor(pCreateInfo->borderColor);
-	if (getPhysicalDevice()->getMetalFeatures()->samplerClampToBorder) {
-		if (pCreateInfo->addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) {
-			mtlSampDesc.sAddressMode = MTLSamplerAddressModeClampToBorderColor;
-		}
-		if (pCreateInfo->addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) {
-			mtlSampDesc.tAddressMode = MTLSamplerAddressModeClampToBorderColor;
-		}
-		if (pCreateInfo->addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER) {
-			mtlSampDesc.rAddressMode = MTLSamplerAddressModeClampToBorderColor;
-		}
-	}
-#endif
 	return mtlSampDesc;
 }
 

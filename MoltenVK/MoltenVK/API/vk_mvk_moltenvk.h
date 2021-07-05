@@ -27,10 +27,10 @@ extern "C" {
 #endif	//  __cplusplus
 	
 #include "mvk_vulkan.h"
+#include <IOSurface/IOSurfaceRef.h>
 
 #ifdef __OBJC__
 #import <Metal/Metal.h>
-#import <IOSurface/IOSurfaceRef.h>
 #else
 typedef unsigned long MTLLanguageVersion;
 #endif
@@ -50,7 +50,7 @@ typedef unsigned long MTLLanguageVersion;
  */
 #define MVK_VERSION_MAJOR   1
 #define MVK_VERSION_MINOR   1
-#define MVK_VERSION_PATCH   3
+#define MVK_VERSION_PATCH   4
 
 #define MVK_MAKE_VERSION(major, minor, patch)    (((major) * 10000) + ((minor) * 100) + (patch))
 #define MVK_VERSION     MVK_MAKE_VERSION(MVK_VERSION_MAJOR, MVK_VERSION_MINOR, MVK_VERSION_PATCH)
@@ -776,6 +776,55 @@ typedef struct {
 	 */
 	MVKConfigAdvertiseExtensions advertiseExtensions;
 
+	/**
+	 * Controls whether MoltenVK should treat a lost VkDevice as resumable, unless the
+	 * corresponding VkPhysicalDevice has also been lost. The VK_ERROR_DEVICE_LOST error has
+	 * a broad definitional range, and can mean anything from a GPU hiccup on the current
+	 * command buffer submission, to a physically removed GPU. In the case where this error does
+	 * not impact the VkPhysicalDevice, Vulkan requires that the app destroy and re-create a new
+	 * VkDevice. However, not all apps (including CTS) respect that requirement, leading to what
+	 * might be a transient command submission failure causing an unexpected catastophic app failure.
+	 *
+	 * If this setting is enabled, in the case of a VK_ERROR_DEVICE_LOST error that does NOT impact
+	 * the VkPhysicalDevice, MoltenVK will log the error, but will not mark the VkDevice as lost,
+	 * allowing the VkDevice to continue to be used. If this setting is disabled, MoltenVK will
+	 * mark the VkDevice as lost, and subsequent use of that VkDevice will be reduced or prohibited.
+	 *
+	 * The value of this parameter may be changed at any time during application runtime,
+	 * and the changed value will affect the error behavior of subsequent command submissions.
+	 *
+	 * The initial value or this parameter is set by the
+	 * MVK_CONFIG_RESUME_LOST_DEVICE
+	 * runtime environment variable or MoltenVK compile-time build setting.
+	 * If neither is set, this setting is disabled by default, and MoltenVK
+	 * will mark the VkDevice as lost when a command submission failure occurs.
+	 */
+	VkBool32 resumeLostDevice;
+
+	/**
+	 * Controls whether MoltenVK should use Metal argument buffers for resources defined in
+	 * descriptor sets, if Metal argument buffers are supported on the platform. Using Metal
+	 * argument buffers dramatically increases the number of buffers, textures and samplers
+	 * that can be bound to a pipeline shader, and in most cases improves performance. If this
+	 * setting is enabled, MoltenVK will use Metal argument buffers to bind resources to the
+	 * shaders. If this setting is disabled, MoltenVK will bind resources to shaders discretely.
+	 *
+	 * NOTE: Currently, Metal argument buffer support is in beta stage, and is only supported
+	 * on macOS 11.0 (Big Sur) or later, or on older versions of macOS using an Intel GPU.
+	 * Metal argument buffers support is not available on iOS. Development to support iOS
+	 * and a wider combination of GPU's on older macOS versions is under way.
+	 *
+	 * The value of this parameter must be changed before creating a VkInstance,
+	 * for the change to take effect.
+	 *
+	 * The initial value or this parameter is set by the
+	 * MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS
+	 * runtime environment variable or MoltenVK compile-time build setting.
+	 * If neither is set, this setting is enabled by default, and MoltenVK will not
+	 * use Metal argument buffers, and will bind resources to shaders discretely.
+	 */
+	VkBool32 useMetalArgumentBuffers;
+
 } MVKConfiguration;
 
 /**
@@ -855,6 +904,8 @@ typedef struct {
     uint32_t minSubgroupSize;			        /**< The minimum number of threads in a SIMD-group. */
     VkBool32 textureBarriers;                   /**< If true, texture barriers are supported within Metal render passes. */
     VkBool32 tileBasedDeferredRendering;        /**< If true, this device uses tile-based deferred rendering. */
+	VkBool32 argumentBuffers;					/**< If true, Metal argument buffers are supported. */
+	VkBool32 descriptorSetArgumentBuffers;		/**< If true, a Metal argument buffer can be assigned to a descriptor set, and used on any pipeline and pipeline stage. If false, a different Metal argument buffer must be used for each pipeline-stage/descriptor-set combination. */
 } MVKPhysicalDeviceMetalFeatures;
 
 /** MoltenVK performance of a particular type of activity. */
@@ -922,14 +973,14 @@ typedef VkResult (VKAPI_PTR *PFN_vkSetMoltenVKConfigurationMVK)(VkInstance ignor
 typedef VkResult (VKAPI_PTR *PFN_vkGetPhysicalDeviceMetalFeaturesMVK)(VkPhysicalDevice physicalDevice, MVKPhysicalDeviceMetalFeatures* pMetalFeatures, size_t* pMetalFeaturesSize);
 typedef VkResult (VKAPI_PTR *PFN_vkGetPerformanceStatisticsMVK)(VkDevice device, MVKPerformanceStatistics* pPerf, size_t* pPerfSize);
 typedef void (VKAPI_PTR *PFN_vkGetVersionStringsMVK)(char* pMoltenVersionStringBuffer, uint32_t moltenVersionStringBufferLength, char* pVulkanVersionStringBuffer, uint32_t vulkanVersionStringBufferLength);
+typedef VkResult (VKAPI_PTR *PFN_vkUseIOSurfaceMVK)(VkImage image, IOSurfaceRef ioSurface);
+typedef void (VKAPI_PTR *PFN_vkGetIOSurfaceMVK)(VkImage image, IOSurfaceRef* pIOSurface);
 
 #ifdef __OBJC__
 typedef void (VKAPI_PTR *PFN_vkGetMTLDeviceMVK)(VkPhysicalDevice physicalDevice, id<MTLDevice>* pMTLDevice);
 typedef VkResult (VKAPI_PTR *PFN_vkSetMTLTextureMVK)(VkImage image, id<MTLTexture> mtlTexture);
 typedef void (VKAPI_PTR *PFN_vkGetMTLTextureMVK)(VkImage image, id<MTLTexture>* pMTLTexture);
 typedef void (VKAPI_PTR *PFN_vkGetMTLBufferMVK)(VkBuffer buffer, id<MTLBuffer>* pMTLBuffer);
-typedef VkResult (VKAPI_PTR *PFN_vkUseIOSurfaceMVK)(VkImage image, IOSurfaceRef ioSurface);
-typedef void (VKAPI_PTR *PFN_vkGetIOSurfaceMVK)(VkImage image, IOSurfaceRef* pIOSurface);
 #endif // __OBJC__
 
 
@@ -1174,6 +1225,8 @@ VKAPI_ATTR void VKAPI_CALL vkGetMTLBufferMVK(
     VkBuffer                                    buffer,
     id<MTLBuffer>*                              pMTLBuffer);
 
+#endif // __OBJC__
+
 /**
  * Indicates that a VkImage should use an IOSurface to underlay the Metal texture.
  *
@@ -1222,8 +1275,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkUseIOSurfaceMVK(
 VKAPI_ATTR void VKAPI_CALL vkGetIOSurfaceMVK(
     VkImage                                     image,
     IOSurfaceRef*                               pIOSurface);
-
-#endif // __OBJC__
 
 
 #pragma mark -

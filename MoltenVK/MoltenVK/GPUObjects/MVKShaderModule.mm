@@ -36,6 +36,14 @@ MVKMTLFunction::MVKMTLFunction(const MVKMTLFunction& other) {
 	threadGroupSize = other.threadGroupSize;
 }
 
+MVKMTLFunction& MVKMTLFunction::operator=(const MVKMTLFunction& other) {
+	[_mtlFunction release];
+	_mtlFunction = [other._mtlFunction retain];		// retained
+	shaderConversionResults = other.shaderConversionResults;
+	threadGroupSize = other.threadGroupSize;
+	return *this;
+}
+
 MVKMTLFunction::~MVKMTLFunction() {
 	[_mtlFunction release];
 }
@@ -163,10 +171,20 @@ MVKShaderLibrary::MVKShaderLibrary(MVKVulkanAPIDeviceObject* owner,
     mvkDev->addActivityPerformance(mvkDev->_performanceStatistics.shaderCompilation.mslLoad, startTime);
 }
 
-MVKShaderLibrary::MVKShaderLibrary(const MVKShaderLibrary& other) : _owner(other._owner) {
+MVKShaderLibrary::MVKShaderLibrary(const MVKShaderLibrary& other) {
+	_owner = other._owner;
 	_mtlLibrary = [other._mtlLibrary retain];
 	_shaderConversionResults = other._shaderConversionResults;
 	_msl = other._msl;
+}
+
+MVKShaderLibrary& MVKShaderLibrary::operator=(const MVKShaderLibrary& other) {
+	[_mtlLibrary release];
+	_owner = other._owner;
+	_mtlLibrary = [other._mtlLibrary retain];
+	_shaderConversionResults = other._shaderConversionResults;
+	_msl = other._msl;
+	return *this;
 }
 
 // If err object is nil, the compilation succeeded without any warnings.
@@ -193,14 +211,14 @@ MVKShaderLibrary::~MVKShaderLibrary() {
 #pragma mark -
 #pragma mark MVKShaderLibraryCache
 
-MVKShaderLibrary* MVKShaderLibraryCache::getShaderLibrary(SPIRVToMSLConversionConfiguration* pContext,
+MVKShaderLibrary* MVKShaderLibraryCache::getShaderLibrary(SPIRVToMSLConversionConfiguration* pShaderConfig,
 														  MVKShaderModule* shaderModule,
 														  bool* pWasAdded) {
 	bool wasAdded = false;
-	MVKShaderLibrary* shLib = findShaderLibrary(pContext);
+	MVKShaderLibrary* shLib = findShaderLibrary(pShaderConfig);
 	if ( !shLib ) {
-		if (shaderModule->convert(pContext)) {
-			shLib = addShaderLibrary(pContext, shaderModule->getMSL(), shaderModule->getConversionResults());
+		if (shaderModule->convert(pShaderConfig)) {
+			shLib = addShaderLibrary(pShaderConfig, shaderModule->getMSL(), shaderModule->getConversionResults());
 			wasAdded = true;
 		}
 	}
@@ -210,24 +228,24 @@ MVKShaderLibrary* MVKShaderLibraryCache::getShaderLibrary(SPIRVToMSLConversionCo
 	return shLib;
 }
 
-// Finds and returns a shader library matching the specified context, or returns nullptr if it doesn't exist.
-// If a match is found, the specified context is aligned with the context of the matching library.
-MVKShaderLibrary* MVKShaderLibraryCache::findShaderLibrary(SPIRVToMSLConversionConfiguration* pContext) {
+// Finds and returns a shader library matching the shader config, or returns nullptr if it doesn't exist.
+// If a match is found, the shader config is aligned with the shader config of the matching library.
+MVKShaderLibrary* MVKShaderLibraryCache::findShaderLibrary(SPIRVToMSLConversionConfiguration* pShaderConfig) {
 	for (auto& slPair : _shaderLibraries) {
-		if (slPair.first.matches(*pContext)) {
-			pContext->alignWith(slPair.first);
+		if (slPair.first.matches(*pShaderConfig)) {
+			pShaderConfig->alignWith(slPair.first);
 			return slPair.second;
 		}
 	}
 	return nullptr;
 }
 
-// Adds and returns a new shader library configured from the specified context.
-MVKShaderLibrary* MVKShaderLibraryCache::addShaderLibrary(SPIRVToMSLConversionConfiguration* pContext,
+// Adds and returns a new shader library configured from the specified conversion configuration.
+MVKShaderLibrary* MVKShaderLibraryCache::addShaderLibrary(SPIRVToMSLConversionConfiguration* pShaderConfig,
 														  const string& mslSourceCode,
 														  const SPIRVToMSLConversionResults& shaderConversionResults) {
 	MVKShaderLibrary* shLib = new MVKShaderLibrary(_owner, mslSourceCode, shaderConversionResults);
-	_shaderLibraries.emplace_back(*pContext, shLib);
+	_shaderLibraries.emplace_back(*pShaderConfig, shLib);
 	return shLib;
 }
 
@@ -250,7 +268,7 @@ MVKShaderLibraryCache::~MVKShaderLibraryCache() {
 #pragma mark -
 #pragma mark MVKShaderModule
 
-MVKMTLFunction MVKShaderModule::getMTLFunction(SPIRVToMSLConversionConfiguration* pContext,
+MVKMTLFunction MVKShaderModule::getMTLFunction(SPIRVToMSLConversionConfiguration* pShaderConfig,
 											   const VkSpecializationInfo* pSpecializationInfo,
 											   MVKPipelineCache* pipelineCache) {
 	lock_guard<mutex> lock(_accessLock);
@@ -259,21 +277,21 @@ MVKMTLFunction MVKShaderModule::getMTLFunction(SPIRVToMSLConversionConfiguration
 	if ( !mvkLib ) {
 		uint64_t startTime = _device->getPerformanceTimestamp();
 		if (pipelineCache) {
-			mvkLib = pipelineCache->getShaderLibrary(pContext, this);
+			mvkLib = pipelineCache->getShaderLibrary(pShaderConfig, this);
 		} else {
-			mvkLib = _shaderLibraryCache.getShaderLibrary(pContext, this);
+			mvkLib = _shaderLibraryCache.getShaderLibrary(pShaderConfig, this);
 		}
 		_device->addActivityPerformance(_device->_performanceStatistics.shaderCompilation.shaderLibraryFromCache, startTime);
 	} else {
-		mvkLib->setEntryPointName(pContext->options.entryPointName);
-		pContext->markAllInputsAndResourcesUsed();
+		mvkLib->setEntryPointName(pShaderConfig->options.entryPointName);
+		pShaderConfig->markAllInputsAndResourcesUsed();
 	}
 
 	return mvkLib ? mvkLib->getMTLFunction(pSpecializationInfo, this) : MVKMTLFunctionNull;
 }
 
-bool MVKShaderModule::convert(SPIRVToMSLConversionConfiguration* pContext) {
-	bool shouldLogCode = mvkGetMVKConfiguration()->debugMode;
+bool MVKShaderModule::convert(SPIRVToMSLConversionConfiguration* pShaderConfig) {
+	bool shouldLogCode = mvkConfig().debugMode;
 	bool shouldLogEstimatedGLSL = shouldLogCode;
 
 	// If the SPIR-V converter does not have any code, but the GLSL converter does,
@@ -281,7 +299,7 @@ bool MVKShaderModule::convert(SPIRVToMSLConversionConfiguration* pContext) {
 	if ( !_spvConverter.hasSPIRV() && _glslConverter.hasGLSL() ) {
 
 		uint64_t startTime = _device->getPerformanceTimestamp();
-		bool wasConverted = _glslConverter.convert(getMVKGLSLConversionShaderStage(pContext), shouldLogCode, false);
+		bool wasConverted = _glslConverter.convert(getMVKGLSLConversionShaderStage(pShaderConfig), shouldLogCode, false);
 		_device->addActivityPerformance(_device->_performanceStatistics.shaderCompilation.glslToSPRIV, startTime);
 
 		if (wasConverted) {
@@ -294,7 +312,7 @@ bool MVKShaderModule::convert(SPIRVToMSLConversionConfiguration* pContext) {
 	}
 
 	uint64_t startTime = _device->getPerformanceTimestamp();
-	bool wasConverted = _spvConverter.convert(*pContext, shouldLogCode, shouldLogCode, shouldLogEstimatedGLSL);
+	bool wasConverted = _spvConverter.convert(*pShaderConfig, shouldLogCode, shouldLogCode, shouldLogEstimatedGLSL);
 	_device->addActivityPerformance(_device->_performanceStatistics.shaderCompilation.spirvToMSL, startTime);
 
 	if (wasConverted) {
@@ -305,9 +323,9 @@ bool MVKShaderModule::convert(SPIRVToMSLConversionConfiguration* pContext) {
 	return wasConverted;
 }
 
-// Returns the MVKGLSLConversionShaderStage corresponding to the shader stage in the SPIR-V converter context.
-MVKGLSLConversionShaderStage MVKShaderModule::getMVKGLSLConversionShaderStage(SPIRVToMSLConversionConfiguration* pContext) {
-	switch (pContext->options.entryPointStage) {
+// Returns the MVKGLSLConversionShaderStage corresponding to the shader stage in the SPIR-V conversion configuration.
+MVKGLSLConversionShaderStage MVKShaderModule::getMVKGLSLConversionShaderStage(SPIRVToMSLConversionConfiguration* pShaderConfig) {
+	switch (pShaderConfig->options.entryPointStage) {
 		case spv::ExecutionModelVertex:						return kMVKGLSLConversionShaderStageVertex;
 		case spv::ExecutionModelTessellationControl:		return kMVKGLSLConversionShaderStageTessControl;
 		case spv::ExecutionModelTessellationEvaluation:		return kMVKGLSLConversionShaderStageTessEval;

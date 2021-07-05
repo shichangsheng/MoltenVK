@@ -223,9 +223,7 @@ id<MTLBuffer> MVKTimestampQueryPool::getResultBuffer(MVKCommandEncoder* cmdEncod
 	const MVKMTLBufferAllocation* tempBuff = cmdEncoder->getTempMTLBuffer(queryCount * _queryElementCount * sizeof(uint64_t));
 	void* pBuffData = tempBuff->getContents();
 	size_t size = queryCount * _queryElementCount * sizeof(uint64_t);
-	mlock(pBuffData, size);
 	memcpy(pBuffData, &_timestamps[firstQuery], size);
-	munlock(pBuffData, size);
 	offset = tempBuff->_offset;
 	return tempBuff->_mtlBuffer;
 }
@@ -330,7 +328,7 @@ void MVKOcclusionQueryPool::beginQueryAddedTo(uint32_t query, MVKCommandBuffer* 
 MVKOcclusionQueryPool::MVKOcclusionQueryPool(MVKDevice* device,
                                              const VkQueryPoolCreateInfo* pCreateInfo) : MVKQueryPool(device, pCreateInfo, 1) {
 
-    if (mvkGetMVKConfiguration()->supportLargeQueryPools) {
+    if (mvkConfig().supportLargeQueryPools) {
         _queryIndexOffset = 0;
 
         // Ensure we don't overflow the maximum number of queries
